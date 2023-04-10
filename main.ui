@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 0.10.3 -->
+<interface>
+  <!-- interface-name example -->
+  <requires lib="gtk" version="4.6"/>
+  <template class="FlyBy" parent="GtkApplicationWindow">
+    <property name="name">FlyBy</property>
+    <property name="title">FlyBy</property>
+    <child>
+      <object class="GtkLabel" id="label">
+        <property name="height-request">300</property>
+        <property name="label">Hello, world!</property>
+        <property name="width-request">400</property>
+      </object>
+    </child>
+    <child type="titlebar">
+      <object class="GtkHeaderBar"/>
+    </child>
+  </template>
+</interface>
