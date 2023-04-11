@@ -3,5 +3,8 @@
   <gresource prefix="/com/github/albert-tomanek/flyby">
     <file compressed="true" preprocess="xml-stripblanks">main.ui</file>
 	  <file compressed="true">style.css</file>
+    <!-- Glasses icons by `goff.brian` from Vecteezy.com -->
+    <file compressed="true">glasses1.svg</file>
+    <file compressed="true">glasses2.svg</file>
   </gresource>
 </gresources>
