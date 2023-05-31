@@ -23,8 +23,8 @@
             <property name="halign">end</property>
             <property name="spacing">8</property>
             <child>
-              <object class="GtkScale">
-                <property name="adjustment">adj_framediff</property>
+              <object class="GtkScale" id="framediff_scale">
+                <property name="adjustment">framediff_adj</property>
                 <property name="digits">0</property>
                 <property name="draw-value">True</property>
                 <property name="round-digits">0</property>
@@ -54,26 +54,34 @@
     </child>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="titlebar">
-        <child>
-          <object class="GtkMenuButton">
-            <property name="icon-name">document-open-symbolic</property>
-            <property name="label">Open</property>
-            <property name="popover">open_popover</property>
-            <property name="visible">False</property>
-            <signal name="activate" handler="on_open_file"/>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton">
-            <property name="label">Open</property>
-            <signal name="clicked" handler="on_open_file"/>
-          </object>
-        </child>
         <child type="end">
           <object class="GtkMenuButton">
+            <property name="popover">goggles_popover</property>
             <child>
               <object class="GtkImage">
                 <property name="resource">/com/github/albert-tomanek/flyby/glasses2.svg</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkPopover"/>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="css-classes">linked</property>
+            <property name="halign">start</property>
+            <child>
+              <object class="GtkButton" id="import_button">
+                <property name="label">Load</property>
+                <signal name="clicked" handler="on_import"/>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="export_button">
+                <property name="icon-name">document-save-symbolic</property>
+                <property name="label">Export</property>
+                <signal name="clicked" handler="on_export"/>
               </object>
             </child>
           </object>
@@ -82,7 +90,6 @@
           <object class="GtkToggleButton" id="play_button">
             <property name="css-classes">suggested-action</property>
             <property name="icon-name">media-playback-start-symbolic</property>
-            <signal name="toggled" handler="on_play_clicked"/>
           </object>
         </child>
       </object>
@@ -110,13 +117,57 @@
       </row>
     </data>
   </object>
-  <object class="GtkAdjustment" id="adj_framediff">
+  <object class="GtkAdjustment" id="framediff_adj">
     <property name="lower">-2000.0</property>
     <property name="page-increment">100.0</property>
     <property name="step-increment">10.0</property>
     <property name="upper">2000.0</property>
-    <property name="value">200.0</property>
+    <property name="value">1000.0</property>
     <signal name="value-changed" handler="on_frame_difference_changed" after="yes"/>
   </object>
   <object class="GtkPopover" id="open_popover"/>
+  <object class="GtkPopover" id="goggles_popover">
+    <property name="child">
+      <object class="GtkListBox">
+        <child>
+          <object class="GtkLabel">
+            <property name="can-focus">False</property>
+            <property name="can-target">False</property>
+            <property name="focus-on-click">False</property>
+            <property name="label">Red boost:</property>
+            <property name="sensitive">False</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScale">
+            <property name="adjustment">redboost_adj</property>
+            <property name="has-tooltip">True</property>
+            <property name="tooltip-text">In some anaglyphic glasses the red filter is darker than the blue filter. Boosting the red channel can compensate for this.</property>
+          </object>
+        </child>
+      </object>
+    </property>
+  </object>
+  <object class="GtkAdjustment" id="redboost_adj">
+    <property name="lower">0.5</property>
+    <property name="upper">3.0</property>
+    <property name="value">1.0</property>
+  </object>
+  <object class="GtkDialog" id="export_dialog">
+    <property name="modal">True</property>
+    <property name="resizable">False</property>
+    <property name="use-header-bar">1</property>
+    <signal name="response" handler="on_export_dialog_response"/>
+    <child>
+      <object class="GtkProgressBar" id="export_progressbar">
+        <property name="show-text">True</property>
+        <property name="text">Exporting...</property>
+      </object>
+    </child>
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <property name="show-title-buttons">False</property>
+      </object>
+    </child>
+  </object>
 </interface>

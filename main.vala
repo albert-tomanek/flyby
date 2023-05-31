@@ -31,11 +31,26 @@ class FlyBy : Gtk.ApplicationWindow
 	[GtkChild] Gtk.Image stage;
 	[GtkChild] Gtk.ComboBoxText ana_mode_box;
 	[GtkChild] Gtk.ToggleButton play_button;
+	[GtkChild] Gtk.Adjustment   framediff_adj;
+	[GtkChild] Gtk.Scale        framediff_scale;
+	[GtkChild] Gtk.Adjustment   redboost_adj;
+	[GtkChild] Gtk.Button       import_button;
+	[GtkChild] Gtk.Button       export_button;
+	[GtkChild] Gtk.Dialog       export_dialog;
+	[GtkChild] Gtk.ProgressBar  export_progressbar;
 
 	Gst.Pipeline pipeline;
+	Gst.Element  export_bin;
+	Gst.Element  export_tee;
+	Gst.Pad?     export_tee_pad = null;
+	Gst.Element  src;
+	Gst.Element  sync;
 	Gst.Element  anablend;
 	Gst.Pad      delay_pad_l;
 	Gst.Pad      delay_pad_r;
+
+	signal void export_start(string path);
+	signal void export_finished();
 
 	public FlyBy(Gtk.Application app)
 	{
@@ -52,52 +67,221 @@ class FlyBy : Gtk.ApplicationWindow
 
 	construct {
 		/* Create pipeline */
-		this.pipeline = Gst.parse_launch("uridecodebin uri=file:///home/albert/Downloads/anaglyphs/mine/motion2.mp4 ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! queue ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 red_coef=1.1 ! videoconvert ! autovideosink sync=false name=sink t. ! queue name=queue_r ! blend.") as Gst.Pipeline;
+		this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 ! tee name=export_tee ! videoconvert ! autovideosink sync=false name=sink t. ! queue name=queue_r ! blend.") as Gst.Pipeline;
+		this.pipeline.get_bus().add_signal_watch(1);
+		this.export_bin = Gst.parse_launch("x264enc ! qtmux ! filesink name=filesink");
 
-		Gst.Element sync = this.pipeline.get_by_name("sync");
-		this.anablend = this.pipeline.get_by_name("blend");
+		this.sync        = this.pipeline.get_by_name("sync");
+		this.src         = this.pipeline.get_by_name("src");
+		this.anablend    = this.pipeline.get_by_name("blend");
+		this.export_tee  = this.pipeline.get_by_name("export_tee");
 		this.delay_pad_l = this.pipeline.get_by_name("queue_l").sinkpads.first().data;
 		this.delay_pad_r = this.pipeline.get_by_name("queue_r").sinkpads.first().data;
 		
-		pipeline.set_state(Gst.State.PAUSED);
-		//  this.delay_pad_l.offset = (200*100000);
+		pipeline.set_state(Gst.State.NULL);
 
+		this.export_start.connect((path) => {
+			this.add_export_branch();
+			this.pipeline.get_by_name("filesink").set("location", path);
+			pipeline.set_state(Gst.State.PLAYING);
+		});
+		this.export_finished.connect(this.remove_export_branch);
+		
 		/* Connect UI */
-
+		
 		this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
+		this.redboost_adj.bind_property("value", this.anablend, "red_coef", BindingFlags.SYNC_CREATE);
+		this.src.bind_property("uri", this.export_button, "sensitive", BindingFlags.SYNC_CREATE, (b, from, ref to) => { to.set_boolean(from.get_string() != null); return true; });
+		// Play button
+		this.src.bind_property("uri", this.play_button, "sensitive", BindingFlags.SYNC_CREATE, (b, from, ref to) => { to.set_boolean(from.get_string() != null); return true; });
+		this.play_button.notify["active"].connect(() => {
+			if (this.play_button.active)
+			{
+				pipeline.set_state(Gst.State.PLAYING);
+				this.play_button.icon_name = "media-playback-pause-symbolic";
+			}
+			else
+			{
+				pipeline.set_state(Gst.State.PAUSED);
+				this.play_button.icon_name = "media-playback-start-symbolic";
+			}
+		});
+		this.pipeline.get_bus().message["eos"].connect((msg) => {
+			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.ACCURATE | Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+		});
+		this.pipeline.get_bus().message["state-changed"].connect((msg) => {
+			Gst.State new_state;
+			msg.parse_state_changed(null, out new_state, null);
+
+			this.play_button.active = (new_state == Gst.State.PLAYING);
+		});
+		this.on_frame_difference_changed();
+
+		this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
+		this.export_start.connect(() => {
+			this.export_dialog.set_transient_for(this);
+			this.export_dialog.show();
+		});
+		this.export_finished.connect(() => {
+			this.export_dialog.set_transient_for(null);
+			this.export_dialog.hide();
+		});
 	}
 
 	/* UI callbacks */
 	[GtkCallback]
-	void on_open_file()
+	void on_import()
 	{
-		message("opened");
+		var d = new Gtk.FileChooserDialog("Open video file", this, Gtk.FileChooserAction.OPEN, "Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK) {
+			select_multiple = false,
+			filter = new Gtk.FileFilter() {
+				name = "MP4 files",
+			},
+		};
+		d.filter.add_pattern("*.mp4");
+		
+		d.show();
+
+		d.response.connect((r) => {
+			if (r == Gtk.ResponseType.OK)
+			{
+				pipeline.set_state(Gst.State.NULL);
+				this.src.set("uri", "file://" + d.get_file().get_path());
+				pipeline.set_state(Gst.State.PAUSED);
+			}
+
+			d.close();
+		});
+		//  this.reset_adjustment();
 	}
 
 	[GtkCallback]
-	void on_play_clicked()
+	void on_export()
 	{
-		if (this.play_button.active)
-		{
-			pipeline.set_state(Gst.State.PLAYING);
-			this.play_button.icon_name = "media-playback-pause-symbolic";
-		}
-		else
-		{
-			pipeline.set_state(Gst.State.PAUSED);
-			this.play_button.icon_name = "media-playback-start-symbolic";
-		}
+		/* Pick save location */
+		var d = new Gtk.FileChooserDialog("Export to file", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK) {
+			select_multiple = false,
+			filter = new Gtk.FileFilter() {
+				name = "MP4 files",
+			},
+		};
+		d.filter.add_pattern("*.mp4");
+		
+		d.show();
+
+		d.response.connect((r) => {
+			if (r != Gtk.ResponseType.OK)
+				return;
+			
+			d.close();
+			this.export_start(d.get_file().get_path());
+		});
 	}
 
 	[GtkCallback]
-	void on_frame_difference_changed(Gtk.Adjustment adj)
+	void on_export_dialog_response(int response)
 	{
-		//  pipeline.set_state(Gst.State.PAUSED);
-		this.delay_pad_l.offset = (int64) ( double.max(0, adj.value) * 100000);
-		this.delay_pad_r.offset = (int64) (-double.min(0, adj.value) * 100000);
+		if (response == Gtk.ResponseType.CANCEL)
+		{
+			this.export_finished();
+		}
+	}
 
-		//  query = Gst.Query.new_position(Gst.Format.TIME)
-		this.pipeline.get_by_name("sink").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.ACCURATE | Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
-		//  pipeline.set_state(Gst.State.PLAYING);
+	void add_export_branch()
+	{
+		// Uhh godd: https://stackoverflow.com/questions/74991007/gstreamer-dynamically-link-a-tee-while-pipline-is-playing
+		pipeline.set_state(Gst.State.NULL);
+
+		//  this.export_tee_pad = this.export_tee.get_request_pad("src_%u");
+		//  this.export_bin.link_pads(this.export_tee);
+	}
+
+	void remove_export_branch()
+	{
+		// Assume state is NULL
+
+		//  this.export_bin.unlink(this.export_tee_pad);
+		//  this.export_tee.release_request_pad(this.export_tee_pad);
+		//  this.export_tee_pad = null;
+
+		pipeline.set_state(Gst.State.PAUSED);
+	}
+
+	//  void export_to_file(string path)
+	//  {
+	//  	/* Start Export */
+		
+		
+	//  	pipeline.set_state(Gst.State.NULL);
+	//  	var tee_pad = this.export_tee.get_request_pad('src_%u');
+	//  	export_bin.link(tee_pad);
+
+
+	//  	/* Show dialog */
+
+	//  	var d = new Gtk.Dialog.with_buttons("Exporting Video", this, Gtk.DialogFlags.MODAL | Gtk.DialogFlags.USE_HEADER_BAR, "Cancel", Gtk.ResponseType.CANCEL);
+	//  	var prog = new Gtk.ProgressBar() {
+	//  		show_text = true,
+	//  		text = "Exporting...",
+	//  		fraction = 0.4,
+	//  	};
+	//  	d.set_child(prog);
+	//  	d.show();
+
+	//  	d.response.connect((r) => {
+	//  		if (r == Gtk.ResponseType.CANCEL)
+	//  		{
+	//  			/* Cancel export */
+	//  			d.close();
+	//  		}
+	//  	});
+
+	//  	/* Connect the two */
+	//  	var bus = this.pipeline.get_bus();
+	//  	bus.add_signal_watch();
+	//  	ulong cb_handle = bus.message.connect((m) => {
+	//  		if (m.type == Gst.MessageType.EOS)
+	//  		{
+				//  export_bin.unlink(tee_pad);
+				//  this.export_tee.release_request_pad(tee_pad);
+
+	//  			Signal.remove_emission_hook(bus.message, cb_handle);
+	//  		}
+	//  	});
+	//  }
+
+	[GtkCallback]
+	void on_frame_difference_changed()
+	{
+		this.delay_pad_l.offset = (int64) ( double.max(0, this.framediff_adj.value) * 100000);
+		this.delay_pad_r.offset = (int64) (-double.min(0, this.framediff_adj.value) * 100000);
+
+		/* I know it's stupid, but we get the current playback time and seek to it (in order to flush). */
+		var query = new Gst.Query.position(Gst.Format.TIME);
+		if (pipeline.query(query))
+		{
+			int64 time;
+			query.parse_position(null, out time);
+			this.pipeline.get_by_name("sink").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.ACCURATE | Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
+		}
+	}
+
+	void reset_adjustment()
+	{
+		int fps_num, fps_denom;
+		this.delay_pad_l.get_current_caps().get_structure(0).get_fraction("framerate", out fps_num, out fps_denom);
+		double fps = ((double) fps_num) / ((double) fps_denom);
+
+		this.framediff_adj.lower = -(2 * fps);
+		this.framediff_adj.upper =  (2 * fps);
+		this.framediff_adj.value =  0.2 * fps;	// default diff = 200ms
+
+		this.framediff_scale.clear_marks();
+		
+		for (double i = -2*fps; i <= 2*fps; i += 1/fps)
+		{
+			this.framediff_scale.add_mark(i, Gtk.PositionType.BOTTOM, i == 0 ? "0" : null);
+			message("%f", (float)i);
+		}
 	}
 }
