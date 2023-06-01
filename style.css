@@ -1,3 +1,9 @@
-#stage {
+stage {
 	background: black;
+	min-width: 800px;
+	min-height: 600px;
+}
+
+controls {
+	/* max-width: 1000px; */
 }

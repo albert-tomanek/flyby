@@ -11,11 +11,41 @@
       <object class="GtkBox">
         <property name="orientation">vertical</property>
         <child>
-          <object class="GtkImage" id="stage">
-            <property name="height-request">600</property>
-            <property name="name">stage</property>
-            <property name="vexpand">True</property>
-            <property name="width-request">720</property>
+          <object class="GtkOverlay">
+            <child>
+              <object class="GtkImage" id="stage">
+                <property name="css-name">stage</property>
+                <property name="height-request">0</property>
+                <property name="hexpand">True</property>
+                <property name="vexpand">True</property>
+                <property name="width-request">0</property>
+              </object>
+            </child>
+            <child type="overlay">
+              <object class="GtkBox">
+                <property name="css-classes">osd
+linked</property>
+                <property name="css-name">controls</property>
+                <property name="halign">center</property>
+                <property name="hexpand">True</property>
+                <property name="margin-bottom">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-start">12</property>
+                <property name="valign">end</property>
+                <property name="width-request">750</property>
+                <child>
+                  <object class="GtkToggleButton" id="play_button">
+                    <property name="icon-name">media-playback-start-symbolic</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScale">
+                    <property name="hexpand">True</property>
+                    <property name="show-fill-level">True</property>
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
         <child>
@@ -28,6 +58,7 @@
                 <property name="digits">0</property>
                 <property name="draw-value">True</property>
                 <property name="round-digits">0</property>
+                <property name="tooltip-markup">The offset (in milliseconds) between the left eye and the right eye. Accurate to nearest frame.</property>
                 <property name="value-pos">left</property>
                 <property name="width-request">200</property>
               </object>
@@ -57,6 +88,7 @@
         <child type="end">
           <object class="GtkMenuButton">
             <property name="popover">goggles_popover</property>
+            <property name="tooltip-markup">Properties of the anaglyphic glasses used</property>
             <child>
               <object class="GtkImage">
                 <property name="resource">/com/github/albert-tomanek/flyby/glasses2.svg</property>
@@ -72,9 +104,10 @@
             <property name="css-classes">linked</property>
             <property name="halign">start</property>
             <child>
-              <object class="GtkButton" id="import_button">
+              <object class="GtkMenuButton">
+                <property name="icon-name">x-office-spreadsheet-symbolic</property>
                 <property name="label">Load</property>
-                <signal name="clicked" handler="on_import"/>
+                <property name="popover">load_popover</property>
               </object>
             </child>
             <child>
@@ -84,12 +117,6 @@
                 <signal name="clicked" handler="on_export"/>
               </object>
             </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkToggleButton" id="play_button">
-            <property name="css-classes">suggested-action</property>
-            <property name="icon-name">media-playback-start-symbolic</property>
           </object>
         </child>
       </object>
@@ -169,5 +196,27 @@
         <property name="show-title-buttons">False</property>
       </object>
     </child>
+  </object>
+  <object class="GtkPopover" id="load_popover">
+    <property name="child">
+      <object class="GtkListBox">
+        <child>
+          <object class="GtkButton">
+            <property name="label">Video</property>
+            <signal name="clicked" handler="on_import"/>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="label">Burst</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="label">Stereo pair</property>
+          </object>
+        </child>
+      </object>
+    </property>
   </object>
 </interface>

@@ -34,17 +34,16 @@ class FlyBy : Gtk.ApplicationWindow
 	[GtkChild] Gtk.Adjustment   framediff_adj;
 	[GtkChild] Gtk.Scale        framediff_scale;
 	[GtkChild] Gtk.Adjustment   redboost_adj;
-	[GtkChild] Gtk.Button       import_button;
 	[GtkChild] Gtk.Button       export_button;
 	[GtkChild] Gtk.Dialog       export_dialog;
 	[GtkChild] Gtk.ProgressBar  export_progressbar;
 
 	Gst.Pipeline pipeline;
-	Gst.Element  export_bin;
+	Gst.Bin      export_bin;
 	Gst.Element  export_tee;
 	Gst.Pad?     export_tee_pad = null;
 	Gst.Element  src;
-	Gst.Element  sync;
+	Gst.Element  sink;
 	Gst.Element  anablend;
 	Gst.Pad      delay_pad_l;
 	Gst.Pad      delay_pad_r;
@@ -67,11 +66,11 @@ class FlyBy : Gtk.ApplicationWindow
 
 	construct {
 		/* Create pipeline */
-		this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 ! tee name=export_tee ! videoconvert ! autovideosink sync=false name=sink t. ! queue name=queue_r ! blend.") as Gst.Pipeline;
+		this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 ! tee name=export_tee ! queue ! videoconvert ! autovideosink sync=false name=sink t. ! queue name=queue_r ! blend.") as Gst.Pipeline;
 		this.pipeline.get_bus().add_signal_watch(1);
-		this.export_bin = Gst.parse_launch("x264enc ! qtmux ! filesink name=filesink");
+		this.export_bin = Gst.parse_bin_from_description("videoconvert name=first ! x264enc tune=zerolatency ! mp4mux ! filesink name=filesink", false) as Gst.Bin;
 
-		this.sync        = this.pipeline.get_by_name("sync");
+		this.sink        = this.pipeline.get_by_name("sink");
 		this.src         = this.pipeline.get_by_name("src");
 		this.anablend    = this.pipeline.get_by_name("blend");
 		this.export_tee  = this.pipeline.get_by_name("export_tee");
@@ -81,8 +80,10 @@ class FlyBy : Gtk.ApplicationWindow
 		pipeline.set_state(Gst.State.NULL);
 
 		this.export_start.connect((path) => {
+			pipeline.set_state(Gst.State.PAUSED);
+			this.export_bin.get_by_name("filesink").set("location", path);
 			this.add_export_branch();
-			this.pipeline.get_by_name("filesink").set("location", path);
+			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
 			pipeline.set_state(Gst.State.PLAYING);
 		});
 		this.export_finished.connect(this.remove_export_branch);
@@ -106,17 +107,37 @@ class FlyBy : Gtk.ApplicationWindow
 				this.play_button.icon_name = "media-playback-start-symbolic";
 			}
 		});
+		//  this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, (pad, info) => {
+		//  	var event = info.get_event();
+
+		//  	if (event != null)
+		//  	{
+		//  		if (event.type == Gst.EventType.EOS)
+		//  		{
+		//  			message("seeking %b", this.export_branch_connected);
+		//  			if (this.export_branch_connected)
+		//  				this.remove_export_branch();
+		//  			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+		//  			return Gst.PadProbeReturn.PASS;
+		//  		}
+		//  	}
+		//  	return Gst.PadProbeReturn.PASS;
+		//  });
 		this.pipeline.get_bus().message["eos"].connect((msg) => {
-			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.ACCURATE | Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+			if (this.export_branch_connected)
+				this.export_finished();
+			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
 		});
 		this.pipeline.get_bus().message["state-changed"].connect((msg) => {
 			Gst.State new_state;
 			msg.parse_state_changed(null, out new_state, null);
 
+			message(@"$new_state", new_state);
 			this.play_button.active = (new_state == Gst.State.PLAYING);
 		});
 		this.on_frame_difference_changed();
 
+		// Modal dialogs
 		this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
 		this.export_start.connect(() => {
 			this.export_dialog.set_transient_for(this);
@@ -170,11 +191,10 @@ class FlyBy : Gtk.ApplicationWindow
 		d.show();
 
 		d.response.connect((r) => {
-			if (r != Gtk.ResponseType.OK)
-				return;
-			
+			if (r == Gtk.ResponseType.OK)
+				this.export_start(d.get_file().get_path());
+
 			d.close();
-			this.export_start(d.get_file().get_path());
 		});
 	}
 
@@ -183,14 +203,20 @@ class FlyBy : Gtk.ApplicationWindow
 	{
 		if (response == Gtk.ResponseType.CANCEL)
 		{
-			this.export_finished();
+			this.pipeline.get_by_name("src").send_event(new Gst.Event.eos());
+			//  this.export_finished();
 		}
 	}
 
 	void add_export_branch()
 	{
 		// Uhh godd: https://stackoverflow.com/questions/74991007/gstreamer-dynamically-link-a-tee-while-pipline-is-playing
-		pipeline.set_state(Gst.State.NULL);
+		// Steps detailed here: https://raw.githubusercontent.com/genesi/gstreamer/master/docs/design/part-block.txt
+		// https://stackoverflow.com/questions/74932282/gstreamer-activate-deactivate-a-specific-tee-src-at-runtime/74932832#74932832
+
+		this.pipeline.add(this.export_bin);
+		this.export_tee.link(this.export_bin.get_by_name("first"));
+		this.export_bin.sync_state_with_parent();
 
 		//  this.export_tee_pad = this.export_tee.get_request_pad("src_%u");
 		//  this.export_bin.link_pads(this.export_tee);
@@ -200,11 +226,17 @@ class FlyBy : Gtk.ApplicationWindow
 	{
 		// Assume state is NULL
 
+		this.export_tee.unlink(this.export_bin.get_by_name("first"));
+		this.pipeline.remove(this.export_bin);
 		//  this.export_bin.unlink(this.export_tee_pad);
 		//  this.export_tee.release_request_pad(this.export_tee_pad);
 		//  this.export_tee_pad = null;
+	}
 
-		pipeline.set_state(Gst.State.PAUSED);
+	bool export_branch_connected {
+		get {
+			return this.export_bin.get_by_name("first").get_static_pad("sink").is_linked();
+		}
 	}
 
 	//  void export_to_file(string path)
