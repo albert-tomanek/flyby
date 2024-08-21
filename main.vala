@@ -1,6 +1,9 @@
 // https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs/-/tree/main/video/gtk4
 // https://packages.debian.org/sid/gstreamer1.0-gtk4
 
+// seamless loop: https://stackoverflow.com/questions/53747278/seamless-video-loop-in-gstreamer
+// backwards: https://gstreamer.freedesktop.org/documentation/additional/design/trickmodes.html?gi-language=c
+
 public class FlyByApp : Gtk.Application {
 	public FlyByApp () {
 		Object(
@@ -80,6 +83,26 @@ class FlyBy : Gtk.ApplicationWindow
 	}
 	
 	construct {
+		init_pipeline();
+
+		/* Application states */
+		this.export_start.connect((path) => {
+			pipeline.set_state(Gst.State.PAUSED);
+			this.export_bin.get_by_name("filesink").set("location", path);
+			this.add_export_branch();
+			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+			pipeline.set_state(Gst.State.PLAYING);
+		});
+		this.export_finished.connect(this.remove_export_branch);
+
+		connect_pipeline_to_ui();		
+		init_ui();
+
+		import_video("/home/albert/Videos/exercise.mp4");
+	}
+
+	void init_pipeline()
+	{
 		/* Create pipeline */
 		this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 t. ! queue name=queue_r ! blend. blend. ! tee name=export_tee ! queue ! videoconvert ! clappersink name=sink") as Gst.Pipeline;
 		this.pipeline.get_bus().add_signal_watch(1);
@@ -99,17 +122,10 @@ class FlyBy : Gtk.ApplicationWindow
 		}
 		
 		pipeline.set_state(Gst.State.NULL);
+	}
 
-		/* Application states */
-		this.export_start.connect((path) => {
-			pipeline.set_state(Gst.State.PAUSED);
-			this.export_bin.get_by_name("filesink").set("location", path);
-			this.add_export_branch();
-			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
-			pipeline.set_state(Gst.State.PLAYING);
-		});
-		this.export_finished.connect(this.remove_export_branch);
-
+	void connect_pipeline_to_ui()
+	{
 		/* Duration & progress */
 		this.new_source.connect(() => {
 			unowned string? uri;
@@ -117,11 +133,11 @@ class FlyBy : Gtk.ApplicationWindow
 			var info = (new Gst.PbUtils.Discoverer(1 * Gst.SECOND)).discover_uri(uri);
 			this.duration = info.get_duration();
 		});
-		this.position_scale.change_value.connect((type, set_to) => {
-			//  int64 time = (int64) (set_to * 1000000);
-			message(@"seek $set_to");
-			//  this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
-		});
+		//  this.position_scale.change_value.connect((type, set_to) => {
+		//  	int64 time = (int64) (set_to * 1000000);
+		//  	message(@"seek $set_to");
+		//  	this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
+		//  });
 		this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER, (pad, info) => {
 			/* Slider gets adjusted every time the next buffer is displayed */
 
@@ -134,10 +150,11 @@ class FlyBy : Gtk.ApplicationWindow
 				//  this.position_scale.set_value(((double) position) / ((double) this.duration));	// FIXME
 			}
 			return Gst.PadProbeReturn.PASS;
-		});
-		
-		/* Connect UI */
-		
+		});		
+	}
+
+	void init_ui()
+	{
 		this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
 		this.redboost_adj.notify["value"].connect(() => {
 			this.anablend.set("red_coef", this.redboost_adj.value);
@@ -215,8 +232,6 @@ class FlyBy : Gtk.ApplicationWindow
 			this.export_dialog.set_transient_for(null);
 			this.export_dialog.hide();
 		});
-
-		import_video("/home/albert/Videos/exercise.mp4");
 	}
 
 	/* UI callbacks */
