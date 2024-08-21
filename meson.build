@@ -17,5 +17,6 @@ executable('main',
 		dependency('gobject-2.0'),
 		dependency('gtk4'),
 		dependency('gstreamer-1.0'),
+		dependency('gstreamer-pbutils-1.0'),
 	],
 )

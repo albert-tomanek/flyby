@@ -1,4 +1,5 @@
 // https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs/-/tree/main/video/gtk4
+// https://packages.debian.org/sid/gstreamer1.0-gtk4
 
 public class FlyByApp : Gtk.Application {
 	public FlyByApp () {
@@ -33,6 +34,8 @@ class FlyBy : Gtk.ApplicationWindow
 	[GtkChild] Gtk.ToggleButton play_button;
 	[GtkChild] Gtk.Adjustment   framediff_adj;
 	[GtkChild] Gtk.Scale        framediff_scale;
+	[GtkChild] Gtk.Scale        position_scale;
+	[GtkChild] Gtk.Adjustment   position_adj;
 	[GtkChild] Gtk.Adjustment   redboost_adj;
 	[GtkChild] Gtk.Button       export_button;
 	[GtkChild] Gtk.Dialog       export_dialog;
@@ -48,8 +51,18 @@ class FlyBy : Gtk.ApplicationWindow
 	Gst.Pad      delay_pad_l;
 	Gst.Pad      delay_pad_r;
 
+	Gst.ClockTime duration { get; set; }
+	Gst.ClockTime position {
+		get {
+			Gst.ClockTime pos;
+			this.pipeline.query_position(Gst.Format.PERCENT, out pos);
+			return pos;
+		}
+	}
+
 	signal void export_start(string path);
 	signal void export_finished();
+	signal void new_source();
 
 	public FlyBy(Gtk.Application app)
 	{
@@ -66,7 +79,7 @@ class FlyBy : Gtk.ApplicationWindow
 
 	construct {
 		/* Create pipeline */
-		this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 ! tee name=export_tee ! queue ! videoconvert ! autovideosink sync=false name=sink t. ! queue name=queue_r ! blend.") as Gst.Pipeline;
+		this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 t. ! queue name=queue_r ! blend. blend. ! tee name=export_tee ! queue ! videoconvert ! clappersink name=sink") as Gst.Pipeline;
 		this.pipeline.get_bus().add_signal_watch(1);
 		this.export_bin = Gst.parse_bin_from_description("videoconvert name=first ! x264enc tune=zerolatency ! mp4mux ! filesink name=filesink", false) as Gst.Bin;
 
@@ -79,6 +92,7 @@ class FlyBy : Gtk.ApplicationWindow
 		
 		pipeline.set_state(Gst.State.NULL);
 
+		/* Application states */
 		this.export_start.connect((path) => {
 			pipeline.set_state(Gst.State.PAUSED);
 			this.export_bin.get_by_name("filesink").set("location", path);
@@ -87,6 +101,38 @@ class FlyBy : Gtk.ApplicationWindow
 			pipeline.set_state(Gst.State.PLAYING);
 		});
 		this.export_finished.connect(this.remove_export_branch);
+
+		/* Duration & progress */
+		this.new_source.connect(() => {
+			unowned string? uri;
+			this.src.get("uri", out uri);
+			var info = (new Gst.PbUtils.Discoverer(1 * Gst.SECOND)).discover_uri(uri);
+			this.duration = info.get_duration();
+
+			//  int64 _duration;
+			//  var rc = this.pipeline.query_duration(Gst.Format.TIME, out _duration);
+			//  this.duration = _duration;
+			message(@"queried duraiton, $duration");
+		});
+		this.position_scale.change_value.connect((type, set_to) => {
+			int64 time = (int64) (set_to * 1000000);
+			message(@"seek $time");
+			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
+		});
+		//  Timeout.add(1000/60, () => {
+		//  	this.position_adj.value = ((double) this.position) / 1000000;
+		//  	message(@"$(this.position_adj.value) = $position / $duration");
+		//  	return Source.CONTINUE;
+		//  });
+		this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER, (pad, info) => {
+			var buf = info.get_buffer();
+
+			if (buf != null)
+			{
+				this.position_adj.value = (double) buf.pts / this.duration;
+			}
+			return Gst.PadProbeReturn.PASS;
+		});
 		
 		/* Connect UI */
 		
@@ -123,10 +169,25 @@ class FlyBy : Gtk.ApplicationWindow
 		//  	}
 		//  	return Gst.PadProbeReturn.PASS;
 		//  });
-		this.pipeline.get_bus().message["eos"].connect((msg) => {
-			if (this.export_branch_connected)
-				this.export_finished();
-			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+		this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER/* | Gst.PadProbeType.EVENT_DOWNSTREAM*/, (pad, info) => {
+			//  if (info.get_event() != null)
+			//  {
+			//  	if (info.get_event().type == Gst.EventType.EOS) {
+			//  		// EOS event received, but the sink element is still processing buffers
+			//  		return Gst.PadProbeReturn.OK;
+			//  	}
+			//  }
+		
+			// Check if the buffer is empty
+			var buffer = info.get_buffer();
+			if (buffer == null || buffer.get_size() == 0) {
+				message("No more buffers.");
+				if (this.export_branch_connected)
+					this.export_finished();
+				this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+			}
+		
+			return Gst.PadProbeReturn.OK;
 		});
 		this.pipeline.get_bus().message["state-changed"].connect((msg) => {
 			Gst.State new_state;
@@ -169,6 +230,7 @@ class FlyBy : Gtk.ApplicationWindow
 				pipeline.set_state(Gst.State.NULL);
 				this.src.set("uri", "file://" + d.get_file().get_path());
 				pipeline.set_state(Gst.State.PAUSED);
+				this.new_source();
 			}
 
 			d.close();
@@ -204,7 +266,7 @@ class FlyBy : Gtk.ApplicationWindow
 		if (response == Gtk.ResponseType.CANCEL)
 		{
 			this.pipeline.get_by_name("src").send_event(new Gst.Event.eos());
-			//  this.export_finished();
+			this.export_finished();
 		}
 	}
 
