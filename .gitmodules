@@ -1,3 +1,6 @@
 [submodule "deps/clapper"]
 	path = deps/clapper
 	url = https://github.com/Rafostar/clapper/
+[submodule "deps/clappersink/clapper"]
+	path = deps/clappersink/clapper
+	url = https://github.com/Rafostar/clapper/
