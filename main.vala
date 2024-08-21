@@ -34,8 +34,9 @@ class FlyBy : Gtk.ApplicationWindow
 	[GtkChild] Gtk.ToggleButton play_button;
 	[GtkChild] Gtk.Adjustment   framediff_adj;
 	[GtkChild] Gtk.Scale        framediff_scale;
-	[GtkChild] Gtk.Scale        position_scale;
-	[GtkChild] Gtk.Adjustment   position_adj;
+	//  [GtkChild] Gtk.Scale        position_scale;
+	[GtkChild] Gtk.Label        position_bar;
+	           Gtk.Adjustment   position_adj = new Gtk.Adjustment(0, 0, 0, 0, 0, 0);
 	[GtkChild] Gtk.Adjustment   redboost_adj;
 	[GtkChild] Gtk.Button       export_button;
 	[GtkChild] Gtk.Dialog       export_dialog;
@@ -51,14 +52,13 @@ class FlyBy : Gtk.ApplicationWindow
 	Gst.Pad      delay_pad_l;
 	Gst.Pad      delay_pad_r;
 
-	Gst.ClockTime duration { get; set; }
-	Gst.ClockTime position {
-		get {
-			Gst.ClockTime pos;
-			this.pipeline.query_position(Gst.Format.PERCENT, out pos);
-			return pos;
-		}
-	}
+	//  Gst.ClockTime position {
+	//  	get {
+	//  		Gst.ClockTime pos;
+	//  		this.pipeline.query_position(Gst.Format.PERCENT, out pos);
+	//  		return pos;
+	//  	}
+	//  }
 
 	signal void export_start(string path);
 	signal void export_finished();
@@ -93,6 +93,7 @@ class FlyBy : Gtk.ApplicationWindow
 		{
 			Gtk.Widget clappersink_widget;
 			this.sink.get("widget", out clappersink_widget);
+			clappersink_widget.set_size_request(800, 200);
 			this.stage.append(clappersink_widget);
 		}
 		
@@ -113,29 +114,26 @@ class FlyBy : Gtk.ApplicationWindow
 			unowned string? uri;
 			this.src.get("uri", out uri);
 			var info = (new Gst.PbUtils.Discoverer(1 * Gst.SECOND)).discover_uri(uri);
-			this.duration = info.get_duration();
+			this.position_adj.upper = (double) info.get_duration();
 
-			//  int64 _duration;
-			//  var rc = this.pipeline.query_duration(Gst.Format.TIME, out _duration);
-			//  this.duration = _duration;
-			message(@"queried duraiton, $duration");
+			message(@"queried duraiton, $(this.position_adj.upper)");
 		});
-		this.position_scale.change_value.connect((type, set_to) => {
-			int64 time = (int64) (set_to * 1000000);
-			message(@"seek $time");
-			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
-		});
-		//  Timeout.add(1000/60, () => {
-		//  	this.position_adj.value = ((double) this.position) / 1000000;
-		//  	message(@"$(this.position_adj.value) = $position / $duration");
-		//  	return Source.CONTINUE;
+		//  this.position_scale.change_value.connect((type, set_to) => {
+		//  	int64 time = (int64) (set_to * 1000000);
+		//  	message(@"seek $time");
+		//  	this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
 		//  });
+		this.position_adj.notify["value"].connect(() => {
+			this.position_bar.label = @"$((this.position_adj.value / this.position_adj.upper) * 100)%";
+		});
 		this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER, (pad, info) => {
+			/* Slider gets adjusted every time the next buffer is displayed */
+
 			var buf = info.get_buffer();
 
 			if (buf != null)
 			{
-				this.position_adj.value = (double) buf.pts / this.duration;
+				this.position_adj.value = (double) buf.pts;
 			}
 			return Gst.PadProbeReturn.PASS;
 		});
@@ -169,7 +167,7 @@ class FlyBy : Gtk.ApplicationWindow
 		//  			message("seeking %b", this.export_branch_connected);
 		//  			if (this.export_branch_connected)
 		//  				this.remove_export_branch();
-		//  			this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+		//  			this.fpipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
 		//  			return Gst.PadProbeReturn.PASS;
 		//  		}
 		//  	}
@@ -356,7 +354,7 @@ class FlyBy : Gtk.ApplicationWindow
 		this.delay_pad_l.offset = (int64) ( double.max(0, this.framediff_adj.value) * 100000);
 		this.delay_pad_r.offset = (int64) (-double.min(0, this.framediff_adj.value) * 100000);
 
-		/* I know it's stupid, but we get the current playback time and seek to it (in order to flush). */
+		/* FIXME: I know it's stupid, but we get the current playback time and seek to it (in order to flush). */
 		var query = new Gst.Query.position(Gst.Format.TIME);
 		if (pipeline.query(query))
 		{

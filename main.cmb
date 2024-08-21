@@ -10,7 +10,7 @@
   <object>
 	(2,1,"GtkApplicationWindow","FlyBy",None,None,None,None,None,None,None),
 	(2,2,"GtkBox",None,1,None,None,None,None,None,None),
-	(2,4,"GtkBox",None,2,None,None,None,1,None,None),
+	(2,4,"GtkBox","settings_bar",2,None,None,None,2,None,None),
 	(2,5,"GtkScale","framediff_scale",4,None,None,None,None,None,None),
 	(2,6,"GtkComboBoxText","ana_mode_box",4,None,None,None,2,None,None),
 	(2,7,"GtkHeaderBar",None,1,None,"titlebar",None,1,None,None),
@@ -38,12 +38,12 @@
 	(2,34,"GtkButton",None,33,None,None,None,None,None,None),
 	(2,35,"GtkButton",None,33,None,None,None,None,None,None),
 	(2,36,"GtkButton",None,33,None,None,None,None,None,None),
-	(2,37,"GtkOverlay",None,2,None,None,None,None,None,None),
-	(2,39,"GtkBox",None,37,None,"overlay",None,None,None,None),
-	(2,40,"GtkToggleButton","play_button",39,None,None,None,None,None,None),
-	(2,41,"GtkScale","position_scale",39,None,None,None,None,None,None),
 	(2,42,"GtkAdjustment","position_adj",None,None,None,None,None,None,None),
-	(2,43,"GtkBox","stage",37,None,None,None,-1,None,None)
+	(2,44,"GtkOverlay",None,2,None,None,None,None,None,None),
+	(2,45,"GtkBox","stage",44,None,None,None,None,None,None),
+	(2,46,"GtkBox","media_bar",44,None,"overlay",None,-1,None,None),
+	(2,47,"GtkToggleButton","play_button",46,None,None,None,-1,None,None),
+	(2,48,"GtkLabel","position_bar",46,None,None,None,-1,None,None)
   </object>
   <object_property>
 	(2,1,"GtkWidget","name","FlyBy",None,None,None,None,None,None,None,None,None),
@@ -104,19 +104,15 @@
 	(2,34,"GtkButton","label","Video",None,None,None,None,None,None,None,None,None),
 	(2,35,"GtkButton","label","Burst",None,None,None,None,None,None,None,None,None),
 	(2,36,"GtkButton","label","Stereo pair",None,None,None,None,None,None,None,None,None),
-	(2,39,"GtkWidget","css-classes","osd\nlinked",None,None,None,None,None,None,None,None,None),
-	(2,39,"GtkWidget","css-name","controls",None,None,None,None,None,None,None,None,None),
-	(2,39,"GtkWidget","hexpand","True",None,None,None,None,None,None,None,None,None),
-	(2,39,"GtkWidget","margin-bottom","12",None,None,None,None,None,None,None,None,None),
-	(2,39,"GtkWidget","margin-end","12",None,None,None,None,None,None,None,None,None),
-	(2,39,"GtkWidget","margin-start","12",None,None,None,None,None,None,None,None,None),
-	(2,39,"GtkWidget","valign","end",None,None,None,None,None,None,None,None,None),
-	(2,40,"GtkButton","icon-name","media-playback-start-symbolic",None,None,None,None,None,None,None,None,None),
-	(2,41,"GtkRange","adjustment","42",None,None,None,None,None,None,None,None,None),
-	(2,41,"GtkRange","round-digits","0",None,None,None,None,None,None,None,None,None),
-	(2,41,"GtkScale","has-origin","False",None,None,None,None,None,None,None,None,None),
-	(2,41,"GtkWidget","hexpand","True",None,None,None,None,None,None,None,None,None),
-	(2,42,"GtkAdjustment","upper","1.0",None,None,None,None,None,None,None,None,None)
+	(2,42,"GtkAdjustment","upper","1.0",None,None,None,None,None,None,None,None,None),
+	(2,46,"GtkBox","spacing","10",None,None,None,None,None,None,None,None,None),
+	(2,46,"GtkWidget","css-classes","osd",None,None,None,None,None,None,None,None,None),
+	(2,46,"GtkWidget","hexpand","True",None,None,None,None,None,None,None,None,None),
+	(2,46,"GtkWidget","margin-bottom","10",None,None,None,None,None,None,None,None,None),
+	(2,46,"GtkWidget","margin-end","10",None,None,None,None,None,None,None,None,None),
+	(2,46,"GtkWidget","margin-start","10",None,None,None,None,None,None,None,None,None),
+	(2,46,"GtkWidget","valign","end",None,None,None,None,None,None,None,None,None),
+	(2,47,"GtkWidget","css-classes","linked",None,None,None,None,None,None,None,None,None)
   </object_property>
   <object_signal>
 	(4,2,10,"GtkAdjustment","value-changed","on_frame_difference_changed",None,None,None,1,None),
@@ -135,7 +131,8 @@
 	(2,8,"GtkListStore",4,8,None,3,None,None,None,None),
 	(2,8,"GtkListStore",5,9,"Half-Color",8,None,None,None,None),
 	(2,8,"GtkListStore",4,10,None,3,None,None,None,None),
-	(2,8,"GtkListStore",5,11,"Full-Color",10,None,None,None,None)
+	(2,8,"GtkListStore",5,11,"Full-Color",10,None,None,None,None),
+	(2,46,"GtkWidget",1,1,None,None,None,None,None,None)
   </object_data>
   <object_data_arg>
 	(2,8,"GtkListStore",2,2,"type","gchararray"),

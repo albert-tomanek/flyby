@@ -12,38 +12,33 @@
         <property name="orientation">vertical</property>
         <child>
           <object class="GtkOverlay">
-            <child>
-              <object class="GtkBox" id="stage"/>
-            </child>
             <child type="overlay">
-              <object class="GtkBox">
-                <property name="css-classes">osd
-linked</property>
-                <property name="css-name">controls</property>
+              <object class="GtkBox" id="media_bar">
+                <property name="css-classes">osd</property>
                 <property name="hexpand">True</property>
-                <property name="margin-bottom">12</property>
-                <property name="margin-end">12</property>
-                <property name="margin-start">12</property>
+                <property name="margin-bottom">10</property>
+                <property name="margin-end">10</property>
+                <property name="margin-start">10</property>
+                <property name="spacing">10</property>
                 <property name="valign">end</property>
                 <child>
                   <object class="GtkToggleButton" id="play_button">
-                    <property name="icon-name">media-playback-start-symbolic</property>
+                    <property name="css-classes">linked</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkScale" id="position_scale">
-                    <property name="adjustment">position_adj</property>
-                    <property name="has-origin">False</property>
-                    <property name="hexpand">True</property>
-                    <property name="round-digits">0</property>
-                  </object>
+                  <object class="GtkLabel" id="position_bar"/>
                 </child>
+                <style/>
               </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="stage"/>
             </child>
           </object>
         </child>
         <child>
-          <object class="GtkBox">
+          <object class="GtkBox" id="settings_bar">
             <property name="halign">end</property>
             <property name="spacing">8</property>
             <child>
