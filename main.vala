@@ -30,13 +30,13 @@ public class FlyByApp : Gtk.Application {
 class FlyBy : Gtk.ApplicationWindow
 {
 	[GtkChild] Gtk.Box stage;
+	[GtkChild] Gtk.Box media_bar;
 	[GtkChild] Gtk.ComboBoxText ana_mode_box;
 	[GtkChild] Gtk.ToggleButton play_button;
 	[GtkChild] Gtk.Adjustment   framediff_adj;
 	[GtkChild] Gtk.Scale        framediff_scale;
-	//  [GtkChild] Gtk.Scale        position_scale;
-	[GtkChild] Gtk.Label        position_bar;
-	           Gtk.Adjustment   position_adj = new Gtk.Adjustment(0, 0, 0, 0, 0, 0);
+	[GtkChild] Gtk.Scale        position_scale;
+	[GtkChild] Gtk.Adjustment   position_adj;
 	[GtkChild] Gtk.Adjustment   redboost_adj;
 	[GtkChild] Gtk.Button       export_button;
 	[GtkChild] Gtk.Dialog       export_dialog;
@@ -52,6 +52,8 @@ class FlyBy : Gtk.ApplicationWindow
 	Gst.Pad      delay_pad_l;
 	Gst.Pad      delay_pad_r;
 
+	Gst.ClockTime duration;
+	Gst.ClockTime position;
 	//  Gst.ClockTime position {
 	//  	get {
 	//  		Gst.ClockTime pos;
@@ -76,7 +78,7 @@ class FlyBy : Gtk.ApplicationWindow
 		css_provider.load_from_resource("/com/github/albert-tomanek/flyby/style.css");
 		Gtk.StyleContext.add_provider_for_display (Gdk.Display.get_default (), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
 	}
-
+	
 	construct {
 		/* Create pipeline */
 		this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 t. ! queue name=queue_r ! blend. blend. ! tee name=export_tee ! queue ! videoconvert ! clappersink name=sink") as Gst.Pipeline;
@@ -93,7 +95,6 @@ class FlyBy : Gtk.ApplicationWindow
 		{
 			Gtk.Widget clappersink_widget;
 			this.sink.get("widget", out clappersink_widget);
-			clappersink_widget.set_size_request(800, 200);
 			this.stage.append(clappersink_widget);
 		}
 		
@@ -114,17 +115,12 @@ class FlyBy : Gtk.ApplicationWindow
 			unowned string? uri;
 			this.src.get("uri", out uri);
 			var info = (new Gst.PbUtils.Discoverer(1 * Gst.SECOND)).discover_uri(uri);
-			this.position_adj.upper = (double) info.get_duration();
-
-			message(@"queried duraiton, $(this.position_adj.upper)");
+			this.duration = info.get_duration();
 		});
-		//  this.position_scale.change_value.connect((type, set_to) => {
-		//  	int64 time = (int64) (set_to * 1000000);
-		//  	message(@"seek $time");
-		//  	this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
-		//  });
-		this.position_adj.notify["value"].connect(() => {
-			this.position_bar.label = @"$((this.position_adj.value / this.position_adj.upper) * 100)%";
+		this.position_scale.change_value.connect((type, set_to) => {
+			//  int64 time = (int64) (set_to * 1000000);
+			message(@"seek $set_to");
+			//  this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
 		});
 		this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER, (pad, info) => {
 			/* Slider gets adjusted every time the next buffer is displayed */
@@ -133,7 +129,9 @@ class FlyBy : Gtk.ApplicationWindow
 
 			if (buf != null)
 			{
-				this.position_adj.value = (double) buf.pts;
+				var position = buf.pts;
+				//  message(@"$(this.position_adj.lower)\t$(this.position_adj.value)\t$(this.position_adj.upper)");
+				//  this.position_scale.set_value(((double) position) / ((double) this.duration));	// FIXME
 			}
 			return Gst.PadProbeReturn.PASS;
 		});
@@ -141,7 +139,10 @@ class FlyBy : Gtk.ApplicationWindow
 		/* Connect UI */
 		
 		this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
-		this.redboost_adj.bind_property("value", this.anablend, "red_coef", BindingFlags.SYNC_CREATE);
+		this.redboost_adj.notify["value"].connect(() => {
+			this.anablend.set("red_coef", this.redboost_adj.value);
+			_botched_flush_pipeline();
+		});
 		this.src.bind_property("uri", this.export_button, "sensitive", BindingFlags.SYNC_CREATE, (b, from, ref to) => { to.set_boolean(from.get_string() != null); return true; });
 		// Play button
 		this.src.bind_property("uri", this.play_button, "sensitive", BindingFlags.SYNC_CREATE, (b, from, ref to) => { to.set_boolean(from.get_string() != null); return true; });
@@ -157,22 +158,24 @@ class FlyBy : Gtk.ApplicationWindow
 				this.play_button.icon_name = "media-playback-start-symbolic";
 			}
 		});
-		//  this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, (pad, info) => {
-		//  	var event = info.get_event();
+		this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, (pad, info) => {
+			var event = info.get_event();
 
-		//  	if (event != null)
-		//  	{
-		//  		if (event.type == Gst.EventType.EOS)
-		//  		{
-		//  			message("seeking %b", this.export_branch_connected);
-		//  			if (this.export_branch_connected)
-		//  				this.remove_export_branch();
-		//  			this.fpipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
-		//  			return Gst.PadProbeReturn.PASS;
-		//  		}
-		//  	}
-		//  	return Gst.PadProbeReturn.PASS;
-		//  });
+			if (event != null)
+			{
+				if (event.type == Gst.EventType.EOS)
+				{
+					//  if (this.export_branch_connected)
+					//  	this.remove_export_branch();
+
+					// Play backwardss
+					//  this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(-1.0, Gst.Format.UNDEFINED, Gst.SeekFlags.FLUSH, Gst.SeekType.NONE, 0, Gst.SeekType.NONE, 0));
+					//  //  this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
+					//  return Gst.PadProbeReturn.HANDLED;
+				}
+			}
+			return Gst.PadProbeReturn.PASS;
+		});
 		this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER/* | Gst.PadProbeType.EVENT_DOWNSTREAM*/, (pad, info) => {
 			//  if (info.get_event() != null)
 			//  {
@@ -197,7 +200,7 @@ class FlyBy : Gtk.ApplicationWindow
 			Gst.State new_state;
 			msg.parse_state_changed(null, out new_state, null);
 
-			message(@"$new_state", new_state);
+			//  message(@"$new_state", new_state);
 			this.play_button.active = (new_state == Gst.State.PLAYING);
 		});
 		this.on_frame_difference_changed();
@@ -212,6 +215,8 @@ class FlyBy : Gtk.ApplicationWindow
 			this.export_dialog.set_transient_for(null);
 			this.export_dialog.hide();
 		});
+
+		import_video("/home/albert/Videos/exercise.mp4");
 	}
 
 	/* UI callbacks */
@@ -230,16 +235,19 @@ class FlyBy : Gtk.ApplicationWindow
 
 		d.response.connect((r) => {
 			if (r == Gtk.ResponseType.OK)
-			{
-				pipeline.set_state(Gst.State.NULL);
-				this.src.set("uri", "file://" + d.get_file().get_path());
-				pipeline.set_state(Gst.State.PAUSED);
-				this.new_source();
-			}
+				import_video(d.get_file().get_path());
 
 			d.close();
 		});
 		//  this.reset_adjustment();
+	}
+
+	void import_video(string path)
+	{
+		pipeline.set_state(Gst.State.NULL);
+		this.src.set("uri", "file://" + path);
+		pipeline.set_state(Gst.State.PAUSED);
+		this.new_source();
 	}
 
 	[GtkCallback]
@@ -354,14 +362,7 @@ class FlyBy : Gtk.ApplicationWindow
 		this.delay_pad_l.offset = (int64) ( double.max(0, this.framediff_adj.value) * 100000);
 		this.delay_pad_r.offset = (int64) (-double.min(0, this.framediff_adj.value) * 100000);
 
-		/* FIXME: I know it's stupid, but we get the current playback time and seek to it (in order to flush). */
-		var query = new Gst.Query.position(Gst.Format.TIME);
-		if (pipeline.query(query))
-		{
-			int64 time;
-			query.parse_position(null, out time);
-			this.pipeline.get_by_name("sink").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.ACCURATE | Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
-		}
+		_botched_flush_pipeline();
 	}
 
 	void reset_adjustment()
@@ -381,5 +382,22 @@ class FlyBy : Gtk.ApplicationWindow
 			this.framediff_scale.add_mark(i, Gtk.PositionType.BOTTOM, i == 0 ? "0" : null);
 			message("%f", (float)i);
 		}
+	}
+
+	void _botched_flush_pipeline()
+	{
+		/* FIXME: I know it's stupid, but we get the current playback time and seek to it (in order to flush). */
+		Gst.State state;
+		this.pipeline.get_state(out state, null, Gst.CLOCK_TIME_NONE);
+		
+		var query = new Gst.Query.position(Gst.Format.TIME);
+		if (pipeline.query(query))
+		{
+			int64 time;
+			query.parse_position(null, out time);
+			this.pipeline.get_by_name("sink").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.ACCURATE | Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
+		}
+
+		this.pipeline.set_state(state);
 	}
 }
