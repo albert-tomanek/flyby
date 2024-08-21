@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<!-- Created with Cambalache 0.10.3 -->
+<!-- Created with Cambalache 0.90.4 -->
 <interface>
   <!-- interface-name example -->
   <requires lib="gtk" version="4.6"/>
@@ -13,26 +13,18 @@
         <child>
           <object class="GtkOverlay">
             <child>
-              <object class="GtkImage" id="stage">
-                <property name="css-name">stage</property>
-                <property name="height-request">0</property>
-                <property name="hexpand">True</property>
-                <property name="vexpand">True</property>
-                <property name="width-request">0</property>
-              </object>
+              <object class="GtkBox" id="stage"/>
             </child>
             <child type="overlay">
               <object class="GtkBox">
                 <property name="css-classes">osd
 linked</property>
                 <property name="css-name">controls</property>
-                <property name="halign">center</property>
                 <property name="hexpand">True</property>
                 <property name="margin-bottom">12</property>
                 <property name="margin-end">12</property>
                 <property name="margin-start">12</property>
                 <property name="valign">end</property>
-                <property name="width-request">750</property>
                 <child>
                   <object class="GtkToggleButton" id="play_button">
                     <property name="icon-name">media-playback-start-symbolic</property>

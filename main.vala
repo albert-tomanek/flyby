@@ -29,7 +29,7 @@ public class FlyByApp : Gtk.Application {
 [GtkTemplate (ui = "/com/github/albert-tomanek/flyby/main.ui")]
 class FlyBy : Gtk.ApplicationWindow
 {
-	[GtkChild] Gtk.Image stage;
+	[GtkChild] Gtk.Box stage;
 	[GtkChild] Gtk.ComboBoxText ana_mode_box;
 	[GtkChild] Gtk.ToggleButton play_button;
 	[GtkChild] Gtk.Adjustment   framediff_adj;
@@ -89,6 +89,12 @@ class FlyBy : Gtk.ApplicationWindow
 		this.export_tee  = this.pipeline.get_by_name("export_tee");
 		this.delay_pad_l = this.pipeline.get_by_name("queue_l").sinkpads.first().data;
 		this.delay_pad_r = this.pipeline.get_by_name("queue_r").sinkpads.first().data;
+
+		{
+			Gtk.Widget clappersink_widget;
+			this.sink.get("widget", out clappersink_widget);
+			this.stage.append(clappersink_widget);
+		}
 		
 		pipeline.set_state(Gst.State.NULL);
 
