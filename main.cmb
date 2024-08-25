@@ -8,7 +8,7 @@
 	(2,"gtk","4.6",None)
   </ui_library>
   <object>
-	(2,1,"GtkApplicationWindow","FlyBy",None,None,None,None,None,None,None),
+	(2,1,"GtkApplicationWindow","FlyByMainWindow",None,None,None,None,None,None,None),
 	(2,7,"GtkHeaderBar",None,1,None,"titlebar",None,1,None,None),
 	(2,8,"GtkListStore","anaglyph_mode_store",None,None,None,None,None,None,None),
 	(2,10,"GtkAdjustment","framediff_adj",None,None,None,None,None,None,None),
@@ -47,7 +47,7 @@
 	(2,48,"GtkLabel",None,46,None,None,None,1,None,None),
 	(2,49,"GtkComboBoxText","ana_mode_box",46,None,None,None,2,None,None),
 	(2,50,"GtkScrolledWindow",None,38,None,None,None,-1,None,None),
-	(2,51,"GtkListView","frames_list",50,None,None,None,-1,None,None)
+	(2,51,"GtkColumnView","frame_listview",50,None,None,None,-1,None,None)
   </object>
   <object_property>
 	(2,1,"GtkWidget","name","FlyBy",None,None,None,None,None,None,None,None,None),

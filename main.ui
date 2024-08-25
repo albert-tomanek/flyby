@@ -3,7 +3,7 @@
 <interface>
   <!-- interface-name example -->
   <requires lib="gtk" version="4.6"/>
-  <template class="FlyBy" parent="GtkApplicationWindow">
+  <template class="FlyByMainWindow" parent="GtkApplicationWindow">
     <property name="name">FlyBy</property>
     <property name="title">FlyBy</property>
     <property name="titlebar">titlebar</property>
@@ -17,7 +17,7 @@
             <child>
               <object class="GtkScrolledWindow">
                 <child>
-                  <object class="GtkListView" id="frames_list">
+                  <object class="GtkColumnView" id="frame_listview">
                     <property name="vexpand">True</property>
                   </object>
                 </child>

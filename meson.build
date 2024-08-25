@@ -11,6 +11,7 @@ executable('main',
 	resources,
 	sources: [
 		'main.vala',
+		'misc.vala',
 	],
 	dependencies: [
 		dependency('glib-2.0'),
@@ -18,5 +19,6 @@ executable('main',
 		dependency('gtk4'),
 		dependency('gstreamer-1.0'),
 		dependency('gstreamer-pbutils-1.0'),
+		dependency('gdk-pixbuf-2.0'),
 	],
 )
