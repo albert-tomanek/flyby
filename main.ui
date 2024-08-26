@@ -3,6 +3,7 @@
 <interface>
   <!-- interface-name example -->
   <requires lib="gtk" version="4.6"/>
+  <requires lib="gio" version="2.0"/>
   <template class="FlyByMainWindow" parent="GtkApplicationWindow">
     <property name="name">FlyBy</property>
     <property name="title">FlyBy</property>
@@ -133,16 +134,15 @@
             <property name="halign">start</property>
             <child>
               <object class="GtkMenuButton">
-                <property name="icon-name">x-office-spreadsheet-symbolic</property>
-                <property name="label">Load</property>
-                <property name="popover">load_popover</property>
+                <property name="label">Save</property>
+                <property name="menu-model">save_menu</property>
               </object>
             </child>
             <child>
-              <object class="GtkButton" id="export_button">
-                <property name="icon-name">document-save-symbolic</property>
-                <property name="label">Export</property>
-                <signal name="clicked" handler="on_export"/>
+              <object class="GtkMenuButton">
+                <property name="icon-name">document-open</property>
+                <property name="label">Open</property>
+                <property name="menu-model">open_menu</property>
               </object>
             </child>
           </object>
@@ -225,7 +225,7 @@
       </object>
     </child>
   </object>
-  <object class="GtkPopover" id="load_popover">
+  <object class="GtkPopover" id="popover_open">
     <property name="child">
       <object class="GtkListBox">
         <child>
@@ -253,4 +253,26 @@
     <property name="upper">20.0</property>
     <property name="value">4.0</property>
   </object>
+  <menu id="save_menu">
+    <item>
+      <attribute name="action">win.save-as</attribute>
+      <attribute name="label">Save _As...</attribute>
+    </item>
+  </menu>
+  <menu id="open_menu">
+    <item>
+      <attribute name="action">win.open</attribute>
+      <attribute name="icon">document-open</attribute>
+      <attribute name="label">Open</attribute>
+    </item>
+    <item>
+      <attribute name="label">Stereo Pair</attribute>
+    </item>
+    <item>
+      <attribute name="label">Burst</attribute>
+    </item>
+    <item>
+      <attribute name="label">Video</attribute>
+    </item>
+  </menu>
 </interface>

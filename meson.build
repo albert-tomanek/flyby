@@ -20,5 +20,7 @@ executable('main',
 		dependency('gstreamer-1.0'),
 		dependency('gstreamer-pbutils-1.0'),
 		dependency('gdk-pixbuf-2.0'),
+		dependency('libgsf-1'),
+		dependency('json-glib-1.0'),
 	],
 )

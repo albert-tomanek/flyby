@@ -35,30 +35,57 @@ namespace FlyBy
 
 		public static Gtk.FileFilter ff_images;
 		public static Gtk.FileFilter ff_videos;
+		public static Gtk.FileFilter ff_flyby;
 	
 		static construct {
 			ff_images = new Gtk.FileFilter() { name = "All image formats" };
 			ff_images.add_mime_type("image/jpeg");
 			ff_images.add_mime_type("image/png");
+
+			ff_flyby = new Gtk.FileFilter() { name = "FlyBy files" };
+			ff_flyby.add_pattern("*.flyby");
 		}	
 	}
 
-	class Frame : Object
+	abstract class Frame : Object
 	{
-		public Gdk.Pixbuf? cache { get; private set; default = null; }
-		public File origin { get; construct set; }
+		public Gdk.Pixbuf? cache { get; set; default = null; }
 
-		construct {
-			this.notify["origin"].connect(() => {
-				new_pixbuf_from_stream.begin(this.origin.read(), (_, res) => {
-					this.cache = new_pixbuf_from_stream.end(res);
-				});
+		public bool hidden { get; set; default = false; }
+
+		public abstract string get_name();
+	}
+
+	class FrameFromDisk : Frame
+	{
+		public File origin { get; private set; }
+
+		public FrameFromDisk(File origin)
+		{
+			this.origin = origin;
+			new_pixbuf_from_stream.begin(this.origin.read(), (_, res) => {
+				this.cache = new_pixbuf_from_stream.end(res);
 			});
 		}
 
 		private static async Gdk.Pixbuf new_pixbuf_from_stream(InputStream stream) throws Error
 		{
 			return yield new Gdk.Pixbuf.from_stream_async(stream);
+		}
+
+		public override string get_name()
+		{
+			return this.origin.get_basename();
+		}
+	}
+
+	class FrameInMem : Frame
+	{
+		public string filename { get; set; }
+
+		public override string get_name()
+		{
+			return this.filename;
 		}
 	}
 
@@ -83,7 +110,6 @@ namespace FlyBy
 		[GtkChild] Gtk.ComboBoxText ana_mode_box;
 		[GtkChild] Gtk.Adjustment   redboost_adj;
 
-		[GtkChild] Gtk.Button       export_button;
 		[GtkChild] Gtk.Dialog       export_dialog;
 		[GtkChild] Gtk.ProgressBar  export_progressbar;
 
@@ -132,7 +158,41 @@ namespace FlyBy
 		construct {
 			init_ui();
 
-			//  import_video("/home/albert/Videos/exercise.mp4");
+			this.add_action_entries({
+				{"save-as", () => {
+					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
+						select_multiple = false,
+						filter = App.ff_flyby
+					};					
+					d.show();
+		
+					d.response.connect((r) => {
+						if (r == Gtk.ResponseType.OK)
+							this.save.begin(d.get_file(), (_, ctx) => {
+								this.save.end(ctx);
+								message("Finished saving");
+							});
+		
+						d.close();
+					});		
+				}, null, null, null},
+				{"open", () => {
+					var d = new Gtk.FileChooserDialog("Open", this, Gtk.FileChooserAction.OPEN, "Cancel", Gtk.ResponseType.CANCEL, "_Open", Gtk.ResponseType.OK) {
+						select_multiple = false,
+						filter = App.ff_flyby,
+					};
+					d.show();
+		
+					d.response.connect((r) => {
+						if (r == Gtk.ResponseType.OK)
+							this.open.begin(d.get_file(), (_, ctx) => {
+								this.open.end(ctx);
+							});
+		
+						d.close();
+					});
+				}, null, null, null}
+			}, this);
 		}
 
 		void init_ui()
@@ -155,7 +215,7 @@ namespace FlyBy
 						var file_info = file.query_info("standard::*", 0);
 						if (App.ff_images.match(file_info))
 						{					
-							this.frames.append(new Frame(){ origin = file });
+							this.frames.append(new FrameFromDisk(file));
 							at_least_one_matched = true;
 						}
 					});
@@ -224,7 +284,7 @@ namespace FlyBy
 					},
 					null,
 					(@this, li) => {
-						((Gtk.Label) li.child).label = ((FlyBy.Frame) li.item).origin.get_basename();
+						((Gtk.Label) li.child).label = ((FlyBy.Frame) li.item).get_name();
 					},
 					null
 				)
@@ -250,7 +310,18 @@ namespace FlyBy
 			);
 			this.frames.items_changed.connect(() => { this.position_adj.upper = (double) this.frames.get_n_items() - 1; });		// When the length changes
 
-			this.on_frame_difference_changed();
+			/* Stage */
+			var scroll = new Gtk.EventControllerScroll(
+				Gtk.EventControllerScrollFlags.VERTICAL |
+				Gtk.EventControllerScrollFlags.DISCRETE
+			);
+			scroll.scroll.connect((dx, dy) => {
+				this.position_adj.value += dy;
+
+				return true;
+			});
+
+			this.stage.add_controller(scroll);
 			
 			/* Modal dialogs */
 			this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
@@ -346,6 +417,12 @@ namespace FlyBy
 				this.frames.find(li.item, out idx_this);
 				this.frames.remove(idx_this);
 			});
+			button = new Gtk.Button.with_label("Toggle hidden");
+			box.append(button);
+			button.clicked.connect(() => {
+				popover.popdown();
+				(li.item as Frame).hidden = !(li.item as Frame).hidden;
+			});
 		}
 
 		/* UI callbacks */
@@ -371,6 +448,123 @@ namespace FlyBy
 			//  this.reset_adjustment();
 		}
 
+		/* Load/Save */
+
+		async void open(File file)
+		{
+			message(@"open $(file.get_path())");
+			var arch = new Gsf.InfileZip(new Gsf.InputStdio(file.get_path()));
+			var media_dir = arch.child_by_name("media") as Gsf.InfileZip;
+
+			/* Read manifest */
+			var info_file = arch.child_by_name("info.json");
+
+			var info_json = new uint8[info_file.size + 1];
+			info_file.read((size_t) info_file.size, info_json);
+
+			var parser = new Json.Parser.immutable_new();
+			parser.load_from_data((string) info_json);
+			var info = parser.get_root();
+
+			var cur = new Json.Reader(info);
+			
+			/* Load frames */
+			cur.read_member("frames");
+
+			for (int i = 0; i < cur.count_elements(); i++)
+			{
+				//  yield;
+				message(@"$(i)");
+				var frame = new FrameInMem();
+
+				cur.read_element(i);
+					cur.read_member("filename");
+					frame.filename = cur.get_string_value();
+					cur.end_member();
+					cur.read_member("hidden");
+					frame.hidden = cur.get_boolean_value();
+					cur.end_member();
+				cur.end_element();
+				
+				var img_file = media_dir.child_by_name(frame.filename);
+				var img_file_data = new uint8[img_file.size + 1];
+				img_file.read((size_t) img_file.size, img_file_data);
+
+				frame.cache = new Gdk.Pixbuf.from_stream(new MemoryInputStream.from_data(img_file_data));
+				this.frames.append(frame);
+			}
+			cur.end_member();
+		}
+
+		async void save(File file)
+		{
+			var arch = new Gsf.OutfileZip(new Gsf.OutputStdio(file.get_path()));
+
+			/* Write manifest */
+			var info_file = arch.new_child("info.json", false);
+
+			Json.Builder builder = new Json.Builder ();
+			{
+				builder.begin_object ();
+
+				builder.set_member_name ("frames");
+				builder.begin_array ();
+				for (uint i = 0; i < this.frames.get_n_items(); i++)
+				{
+					var frame  = this.frames.get_item(i) as Frame;
+
+					builder.begin_object();
+					builder.set_member_name("filename");
+					builder.add_string_value(frame.get_name());
+					builder.set_member_name("hidden");
+					builder.add_boolean_value(frame.hidden);
+					builder.end_object ();
+				}
+				builder.end_array ();
+
+				builder.end_object ();
+			}
+
+			var gen = new Json.Generator() { root = builder.get_root() };
+
+			info_file.puts(gen.to_data(null));
+			info_file.close();
+
+			/* Write media */
+			arch.new_child("media", true);
+
+			for (uint i = 0; i < this.frames.get_n_items(); i++)
+			{
+				Frame frame = this.frames.get_item(i) as Frame;
+				Bytes frame_encoded = null;
+				message("saving "+frame.get_name());
+
+				if (frame is FrameFromDisk)
+				{
+					File source = (frame as FrameFromDisk).origin;
+					string etag_out;
+					frame_encoded = yield source.load_bytes_async(null, out etag_out);
+
+					//  var data = Gsf.StructuredBlob.read(Gst.Input.mmap_new(source.get_path()));
+					//  data.write(dest);
+				}
+				else if (frame is FrameInMem)
+				{
+					uint8[] bytes = {};
+					frame.cache.save_to_bufferv(out bytes, "jpeg", null, null);
+					frame_encoded = new Bytes.take(bytes);
+				}
+
+				var dest = arch.new_child(@"media/$(frame.get_name())", false);
+
+				dest.write(frame_encoded.get_data());
+				dest.close();
+			}
+
+			arch.close();
+		}
+
+		/* Import/Export */
 		void import_video(string path)
 		{
 			pipeline.set_state(Gst.State.NULL);
@@ -379,7 +573,6 @@ namespace FlyBy
 			this.new_source();
 		}
 
-		[GtkCallback]
 		void on_export()
 		{
 			/* Pick save location */
