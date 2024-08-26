@@ -30,6 +30,16 @@
             <property name="orientation">vertical</property>
             <child>
               <object class="GtkOverlay">
+                <property name="vexpand">True</property>
+                <child>
+                  <object class="GtkBox" id="stage">
+                    <property name="css-classes">stage</property>
+                    <property name="height-request">300</property>
+                    <child>
+                      <object class="GtkPicture" id="view"/>
+                    </child>
+                  </object>
+                </child>
                 <child type="overlay">
                   <object class="GtkBox" id="media_bar">
                     <property name="css-classes">osd</property>
@@ -56,9 +66,6 @@
                     </child>
                     <style/>
                   </object>
-                </child>
-                <child>
-                  <object class="GtkBox" id="stage"/>
                 </child>
               </object>
             </child>

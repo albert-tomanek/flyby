@@ -48,9 +48,17 @@ namespace FlyBy
 		public Gdk.Pixbuf? cache { get; private set; default = null; }
 		public File origin { get; construct set; }
 
-		public Frame.from_path(string path)
+		construct {
+			this.notify["origin"].connect(() => {
+				new_pixbuf_from_stream.begin(this.origin.read(), (_, res) => {
+					this.cache = new_pixbuf_from_stream.end(res);
+				});
+			});
+		}
+
+		private static async Gdk.Pixbuf new_pixbuf_from_stream(InputStream stream) throws Error
 		{
-			Object(origin: File.new_for_path(path));
+			return yield new Gdk.Pixbuf.from_stream_async(stream);
 		}
 	}
 
@@ -59,8 +67,9 @@ namespace FlyBy
 	{
 		/* UI */
 		[GtkChild] Gtk.Box          stage;
+		[GtkChild] Gtk.Picture      view;
 
-		[GtkChild] Gtk.ColumnView     frame_listview;
+		[GtkChild] Gtk.ColumnView   frame_listview;
 
 		[GtkChild] Gtk.Box          media_bar;
 		[GtkChild] Gtk.ToggleButton play_button;
@@ -88,6 +97,7 @@ namespace FlyBy
 		Gst.Pad      delay_pad_r;
 		
 		GLib.ListStore frames = new ListStore(typeof(FlyBy.Frame));
+		Binding? current_frame_cache_binding = null;
 
 		Gst.ClockTime duration;
 		Gst.ClockTime position;
@@ -117,74 +127,9 @@ namespace FlyBy
 		}
 		
 		construct {
-			init_pipeline();
-
-			/* Application states */
-			this.export_start.connect((path) => {
-				pipeline.set_state(Gst.State.PAUSED);
-				this.export_bin.get_by_name("filesink").set("location", path);
-				this.add_export_branch();
-				this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
-				pipeline.set_state(Gst.State.PLAYING);
-			});
-			this.export_finished.connect(this.remove_export_branch);
-
-			connect_pipeline_to_ui();		
 			init_ui();
 
 			//  import_video("/home/albert/Videos/exercise.mp4");
-		}
-
-		void init_pipeline()
-		{
-			/* Create pipeline */
-			this.pipeline   = Gst.parse_launch("uridecodebin name=src ! videoconvert ! videoscale ! video/x-raw,width=720,height=480 ! tee name=t ! queue name=queue_l ! anablend name=blend method=1 t. ! queue name=queue_r ! blend. blend. ! tee name=export_tee ! queue ! videoconvert ! clappersink name=sink") as Gst.Pipeline;
-			this.pipeline.get_bus().add_signal_watch(1);
-			this.export_bin = Gst.parse_bin_from_description("videoconvert name=first ! x264enc tune=zerolatency ! mp4mux ! filesink name=filesink", false) as Gst.Bin;
-
-			this.sink        = this.pipeline.get_by_name("sink");
-			this.src         = this.pipeline.get_by_name("src");
-			this.anablend    = this.pipeline.get_by_name("blend");
-			this.export_tee  = this.pipeline.get_by_name("export_tee");
-			this.delay_pad_l = this.pipeline.get_by_name("queue_l").sinkpads.first().data;
-			this.delay_pad_r = this.pipeline.get_by_name("queue_r").sinkpads.first().data;
-
-			{
-				Gtk.Widget clappersink_widget;
-				this.sink.get("widget", out clappersink_widget);
-				this.stage.append(clappersink_widget);
-			}
-			
-			pipeline.set_state(Gst.State.NULL);
-		}
-
-		void connect_pipeline_to_ui()
-		{
-			/* Duration & progress */
-			this.new_source.connect(() => {
-				unowned string? uri;
-				this.src.get("uri", out uri);
-				var info = (new Gst.PbUtils.Discoverer(1 * Gst.SECOND)).discover_uri(uri);
-				this.duration = info.get_duration();
-			});
-			//  this.position_scale.change_value.connect((type, set_to) => {
-			//  	int64 time = (int64) (set_to * 1000000);
-			//  	message(@"seek $set_to");
-			//  	this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.PERCENT, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
-			//  });
-			this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER, (pad, info) => {
-				/* Slider gets adjusted every time the next buffer is displayed */
-
-				var buf = info.get_buffer();
-
-				if (buf != null)
-				{
-					var position = buf.pts;
-					//  message(@"$(this.position_adj.lower)\t$(this.position_adj.value)\t$(this.position_adj.upper)");
-					//  this.position_scale.set_value(((double) position) / ((double) this.duration));	// FIXME
-				}
-				return Gst.PadProbeReturn.PASS;
-			});		
 		}
 
 		void init_ui()
@@ -194,68 +139,11 @@ namespace FlyBy
 				this.anablend.set("red_coef", this.redboost_adj.value);
 				_botched_flush_pipeline();
 			});
-			this.src.bind_property("uri", this.export_button, "sensitive", BindingFlags.SYNC_CREATE, (b, from, ref to) => { to.set_boolean(from.get_string() != null); return true; });
 
 			/* Play button */
-			this.src.bind_property("uri", this.play_button, "sensitive", BindingFlags.SYNC_CREATE, (b, from, ref to) => { to.set_boolean(from.get_string() != null); return true; });
 			this.play_button.notify["active"].connect(() => {
-				if (this.play_button.active)
-				{
-					pipeline.set_state(Gst.State.PLAYING);
-					this.play_button.icon_name = "media-playback-pause-symbolic";
-				}
-				else
-				{
-					pipeline.set_state(Gst.State.PAUSED);
-					this.play_button.icon_name = "media-playback-start-symbolic";
-				}
 			});
 
-			this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, (pad, info) => {
-				var event = info.get_event();
-
-				if (event != null)
-				{
-					if (event.type == Gst.EventType.EOS)
-					{
-						//  if (this.export_branch_connected)
-						//  	this.remove_export_branch();
-
-						// Play backwardss
-						//  this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(-1.0, Gst.Format.UNDEFINED, Gst.SeekFlags.FLUSH, Gst.SeekType.NONE, 0, Gst.SeekType.NONE, 0));
-						//  //  this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
-						//  return Gst.PadProbeReturn.HANDLED;
-					}
-				}
-				return Gst.PadProbeReturn.PASS;
-			});
-			this.sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER/* | Gst.PadProbeType.EVENT_DOWNSTREAM*/, (pad, info) => {
-				//  if (info.get_event() != null)
-				//  {
-				//  	if (info.get_event().type == Gst.EventType.EOS) {
-				//  		// EOS event received, but the sink element is still processing buffers
-				//  		return Gst.PadProbeReturn.OK;
-				//  	}
-				//  }
-			
-				// Check if the buffer is empty
-				var buffer = info.get_buffer();
-				if (buffer == null || buffer.get_size() == 0) {
-					message("No more buffers.");
-					if (this.export_branch_connected)
-						this.export_finished();
-					this.pipeline.get_by_name("src").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.FLUSH, Gst.SeekType.SET, 0, Gst.SeekType.NONE, 0));
-				}
-			
-				return Gst.PadProbeReturn.OK;
-			});
-			this.pipeline.get_bus().message["state-changed"].connect((msg) => {
-				Gst.State new_state;
-				msg.parse_state_changed(null, out new_state, null);
-
-				//  message(@"$new_state", new_state);
-				this.play_button.active = (new_state == Gst.State.PLAYING);
-			});
 			this.on_frame_difference_changed();
 
 			/* Frame list */
@@ -286,6 +174,26 @@ namespace FlyBy
 				can_unselect = false,
 				model = this.frames
 			};
+			this.frame_listview.model.notify["selected-item"].connect(() => {
+				// When the selected frame changes
+
+				// Stop listening to changes in the old frame.
+				if (current_frame_cache_binding != null)
+					current_frame_cache_binding.unbind();
+
+				// Loading is async so we actually have to wait until the property appears
+				current_frame_cache_binding = ((this.frame_listview.model as Gtk.SingleSelection).selected_item as Frame).bind_property(
+					"cache",
+					this.view,
+					"paintable",
+					BindingFlags.SYNC_CREATE,
+					(b, src, ref dest) => {
+						if (src.get_object() != null)	// May still be loading
+							dest.set_object(Gdk.Texture.for_pixbuf(src.get_object() as Gdk.Pixbuf));
+						return true;
+					}
+				);
+			});
 
 			this.frame_listview.append_column(new Gtk.ColumnViewColumn(null, null) {
 				title = "Frame",
