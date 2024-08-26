@@ -39,7 +39,7 @@
 	(2,40,"GtkOverlay",None,39,None,None,None,None,None,None),
 	(2,41,"GtkBox","media_bar",40,None,"overlay",None,None,None,None),
 	(2,42,"GtkToggleButton","play_button",41,None,None,None,None,None,None),
-	(2,43,"GtkScale","position_scale",41,None,None,None,1,None,None),
+	(2,43,"GtkScale","position_scale",41,None,None,None,2,None,None),
 	(2,44,"GtkAdjustment","position_adj",43,None,None,None,None,None,None),
 	(2,46,"GtkBox","settings_bar",39,None,None,None,1,None,None),
 	(2,47,"GtkScale","framediff_scale",46,None,None,None,None,None,None),
@@ -48,7 +48,9 @@
 	(2,50,"GtkScrolledWindow",None,38,None,None,None,-1,None,None),
 	(2,51,"GtkColumnView","frame_listview",50,None,None,None,-1,None,None),
 	(2,52,"GtkPicture","view",53,None,None,None,-1,None,None),
-	(2,53,"GtkBox","stage",40,None,None,None,-1,None,None)
+	(2,53,"GtkBox","stage",40,None,None,None,-1,None,None),
+	(2,54,"GtkSpinButton",None,41,None,None,None,1,None,None),
+	(2,55,"GtkAdjustment","fps_adj",None,None,None,None,-1,None,None)
   </object>
   <object_property>
 	(2,1,"GtkWidget","name","FlyBy",None,None,None,None,None,None,None,None,None),
@@ -103,10 +105,10 @@
 	(2,41,"GtkWidget","margin-end","10",None,None,None,None,None,None,None,None,None),
 	(2,41,"GtkWidget","margin-start","10",None,None,None,None,None,None,None,None,None),
 	(2,41,"GtkWidget","valign","end",None,None,None,None,None,None,None,None,None),
+	(2,42,"GtkButton","icon-name","media-playback-start-symbolic",None,None,None,None,None,None,None,None,None),
 	(2,42,"GtkWidget","css-classes","linked",None,None,None,None,None,None,None,None,None),
 	(2,43,"GtkRange","adjustment",None,None,None,None,None,44,None,None,None,None),
 	(2,43,"GtkWidget","hexpand","True",None,None,None,None,None,None,None,None,None),
-	(2,44,"GtkAdjustment","upper","1.0",None,None,None,None,None,None,None,None,None),
 	(2,46,"GtkBox","spacing","8",None,None,None,None,None,None,None,None,None),
 	(2,46,"GtkWidget","halign","end",None,None,None,None,None,None,None,None,None),
 	(2,47,"GtkRange","adjustment","10",None,None,None,None,None,None,None,None,None),
@@ -126,7 +128,13 @@
 	(2,49,"GtkWidget","tooltip-text","The type of anaglyph to create",None,None,None,None,None,None,None,None,None),
 	(2,51,"GtkWidget","vexpand","True",None,None,None,None,None,None,None,None,None),
 	(2,53,"GtkWidget","css-classes","stage",None,None,None,None,None,None,None,None,None),
-	(2,53,"GtkWidget","height-request","300",None,None,None,None,None,None,None,None,None)
+	(2,53,"GtkWidget","height-request","300",None,None,None,None,None,None,None,None,None),
+	(2,54,"GtkSpinButton","adjustment","55",None,None,None,None,None,None,None,None,None),
+	(2,54,"GtkSpinButton","numeric","True",None,None,None,None,None,None,None,None,None),
+	(2,55,"GtkAdjustment","lower","1.0",None,None,None,None,None,None,None,None,None),
+	(2,55,"GtkAdjustment","step-increment","1.0",None,None,None,None,None,None,None,None,None),
+	(2,55,"GtkAdjustment","upper","20.0",None,None,None,None,None,None,None,None,None),
+	(2,55,"GtkAdjustment","value","4.0",None,None,None,None,None,None,None,None,None)
   </object_property>
   <object_signal>
 	(4,2,10,"GtkAdjustment","value-changed","on_frame_difference_changed",None,None,None,1,None),

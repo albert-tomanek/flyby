@@ -73,8 +73,10 @@ namespace FlyBy
 
 		[GtkChild] Gtk.Box          media_bar;
 		[GtkChild] Gtk.ToggleButton play_button;
+		           int              play_state;		// -1 = advancing backward, 0 = not playing, 1 = advancing forward
 		[GtkChild] Gtk.Scale        position_scale;
 		[GtkChild] Gtk.Adjustment   position_adj;
+		[GtkChild] Gtk.Adjustment   fps_adj;
 		
 		[GtkChild] Gtk.Adjustment   framediff_adj;
 		[GtkChild] Gtk.Scale        framediff_scale;
@@ -97,6 +99,7 @@ namespace FlyBy
 		Gst.Pad      delay_pad_r;
 		
 		GLib.ListStore frames = new ListStore(typeof(FlyBy.Frame));
+		Gtk.SingleSelection selection;
 		Binding? current_frame_cache_binding = null;
 
 		Gst.ClockTime duration;
@@ -134,17 +137,11 @@ namespace FlyBy
 
 		void init_ui()
 		{
-			this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
+			//  this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
 			this.redboost_adj.notify["value"].connect(() => {
 				this.anablend.set("red_coef", this.redboost_adj.value);
 				_botched_flush_pipeline();
 			});
-
-			/* Play button */
-			this.play_button.notify["active"].connect(() => {
-			});
-
-			this.on_frame_difference_changed();
 
 			/* Frame list */
 			var dnd_drop = new Gtk.DropTarget(Type.INVALID, Gdk.DragAction.COPY);
@@ -167,13 +164,29 @@ namespace FlyBy
 				return false;
 			});
 
-			this.frame_listview.add_controller(dnd_drop);
+			var keypress = new Gtk.EventControllerKey();
+			keypress.key_pressed.connect((keyval, keycode, mod_state) => {
+				if (keyval == Gdk.Key.Delete)
+				{
+					if (this.frames.get_n_items() > 0)
+					{
+						this.frames.remove(this.selection.selected);
+						return true;
+					}
+				}
+				return false;
+			});
 
-			this.frame_listview.model = new Gtk.SingleSelection(null) {
+			this.frame_listview.add_controller(dnd_drop);
+			this.frame_listview.add_controller(keypress);
+
+			this.selection = new Gtk.SingleSelection(null) {
 				autoselect = true,
 				can_unselect = false,
 				model = this.frames
 			};
+
+			this.frame_listview.model = this.selection;
 			this.frame_listview.model.notify["selected-item"].connect(() => {
 				// When the selected frame changes
 
@@ -215,8 +228,30 @@ namespace FlyBy
 					},
 					null
 				)
-			});	
+			});
 
+			/* Play controls */
+			this.play_button.notify["active"].connect(() => {
+				if (this.play_button.active)
+				{
+					this.play_button.icon_name = "media-playback-stop-symbolic";
+					this.play_state = 1;
+					Timeout.add((uint) (1000 / this.fps_adj.value), () => { this.advance_frame_recursive(); return false; });
+				}
+				else
+				{
+					this.play_button.icon_name = "media-playback-start-symbolic";
+					this.play_state = 0;	// advance_frame_recursive will stop by itself
+				}
+			});
+			this.selection.bind_property("selected", this.position_adj, "value", BindingFlags.BIDIRECTIONAL,
+				(b, src, ref dst) => { dst.set_double((double) src.get_uint()); return true; },
+				(b, src, ref dst) => { dst.set_uint((uint) src.get_double()); return true; }
+			);
+			this.frames.items_changed.connect(() => { this.position_adj.upper = (double) this.frames.get_n_items() - 1; });		// When the length changes
+
+			this.on_frame_difference_changed();
+			
 			/* Modal dialogs */
 			this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
 			this.export_start.connect(() => {
@@ -227,6 +262,17 @@ namespace FlyBy
 				this.export_dialog.set_transient_for(null);
 				this.export_dialog.hide();
 			});
+		}
+
+		void advance_frame_recursive()
+		{
+			if (this.position_adj.value == this.position_adj.upper || this.position_adj.value == this.position_adj.lower)
+				this.play_state = -this.play_state;
+
+			this.position_adj.value += this.play_state;	// either 1 or -1
+
+			if (this.play_state != 0)	// If it is, they've asked us to stop.
+				Timeout.add((uint) (1000 / this.fps_adj.value), () => { this.advance_frame_recursive(); return false; });	// We need to renew this every time because they might have changed the fps setting while we were playing.
 		}
 
 		void setup_row(Gtk.ListItem li)
@@ -274,6 +320,11 @@ namespace FlyBy
 			rclick.pressed.connect((n, x, y) => {
 				popover.set_pointing_to(Gdk.Rectangle() { x = (int) x, y = (int) y, width = 0, height = 0 });
 				popover.popup();
+
+				// For use in actions
+				uint idx_this;
+				this.frames.find(li.item, out idx_this);
+				//  this.index_under_rclick = idx_this;
 			});
 			li.child.add_controller(rclick);
 			
