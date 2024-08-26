@@ -3,6 +3,7 @@
 
 // seamless loop: https://stackoverflow.com/questions/53747278/seamless-video-loop-in-gstreamer
 // backwards: https://gstreamer.freedesktop.org/documentation/additional/design/trickmodes.html?gi-language=c
+// images in Gtk frames: https://stackoverflow.com/questions/70921068/drag-and-drop-with-gtk4-connecting-dragsource-and-droptarget-via-contentprovide
 
 namespace FlyBy
 {
@@ -280,7 +281,6 @@ namespace FlyBy
 
 			this.frame_listview.add_controller(dnd_drop);
 
-			this.frame_listview.reorderable = true;
 			this.frame_listview.model = new Gtk.SingleSelection(null) {
 				autoselect = true,
 				can_unselect = false,
@@ -299,6 +299,7 @@ namespace FlyBy
 							hexpand = true,
 							ellipsize = Pango.EllipsizeMode.END
 						};
+						setup_row(li);
 					},
 					null,
 					(@this, li) => {
@@ -317,6 +318,74 @@ namespace FlyBy
 			this.export_finished.connect(() => {
 				this.export_dialog.set_transient_for(null);
 				this.export_dialog.hide();
+			});
+		}
+
+		void setup_row(Gtk.ListItem li)
+		{
+			/* Row DnD */
+			// FIXME: Why doesn't Gtk implement DnD of rows out-of-the-box!? Botched solution from: https://discourse.gnome.org/t/reorder-rows-in-a-list-gtk4/8422/4
+
+			var row_drop = new Gtk.DropTarget(typeof(uint), Gdk.DragAction.MOVE);
+			row_drop.on_drop.connect((value, x, y) => {
+				if (value.holds(typeof(uint)))
+				{
+					uint idx_that = value.get_uint();
+					uint idx_this;
+					this.frames.find(li.item, out idx_this);
+
+					var frame = this.frames.get_item(idx_that);
+					this.frames.remove(idx_that);
+					this.frames.insert(idx_this, frame);
+
+					return true;
+				}
+				return false;
+			});
+
+			var row_drag = new Gtk.DragSource() { actions = Gdk.DragAction.MOVE };
+			row_drag.prepare.connect(() => {
+				uint idx_this;	// At the time of drag begin. The index will change, remember.
+				this.frames.find(li.item, out idx_this);
+				
+				var idx_this_val = new Value(typeof(uint));
+				idx_this_val.set_uint(idx_this);
+
+				return new Gdk.ContentProvider.for_value(idx_this_val);
+			});
+
+			li.child.add_controller(row_drop);
+			li.child.add_controller(row_drag);
+
+			/* Right click menu */
+			var popover = new Gtk.Popover();
+
+			var rclick = new Gtk.GestureClick() {
+				button = Gdk.BUTTON_SECONDARY,
+			};
+			rclick.pressed.connect((n, x, y) => {
+				popover.set_pointing_to(Gdk.Rectangle() { x = (int) x, y = (int) y, width = 0, height = 0 });
+				popover.popup();
+			});
+			li.child.add_controller(rclick);
+			
+			// FIXME: How to do an actual context menu in Gtk4 that allows callbacks to code?
+			//  var popover = new Gtk.PopoverMenu.from_model(
+			//  	(new Gtk.Builder.from_resource("/com/github/albert-tomanek/flyby/menu_frame_listview.ui")).get_object("menu") as GLib.MenuModel
+			//  ) {
+			//  	has_arrow = false,
+			//  	halign = Gtk.Align.START,
+			//  };
+			popover.set_parent(li.child);
+			var box = new Gtk.Box(Gtk.Orientation.VERTICAL, 0);
+			popover.child = box;
+			var button = new Gtk.Button.with_label("Delete");
+			box.append(button);
+			button.clicked.connect(() => {
+				popover.popdown();
+				uint idx_this;
+				this.frames.find(li.item, out idx_this);
+				this.frames.remove(idx_this);
 			});
 		}
 

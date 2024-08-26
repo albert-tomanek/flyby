@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<interface><menu id="menu"><item><attribute name="label">_Delete</attribute><attribute name="action">delete-frame</attribute></item></menu></interface>
