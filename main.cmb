@@ -132,6 +132,7 @@
 	(2,49,"GtkWidget","has-tooltip","True",None,None,None,None,None,None,None,None,None),
 	(2,49,"GtkWidget","tooltip-text","The type of anaglyph to create",None,None,None,None,None,None,None,None,None),
 	(2,51,"GtkWidget","vexpand","True",None,None,None,None,None,None,None,None,None),
+	(2,52,"GtkWidget","hexpand","True",None,None,None,None,None,None,None,None,None),
 	(2,53,"GtkWidget","css-classes","stage",None,None,None,None,None,None,None,None,None),
 	(2,53,"GtkWidget","height-request","300",None,None,None,None,None,None,None,None,None),
 	(2,54,"GtkSpinButton","adjustment","55",None,None,None,None,None,None,None,None,None),

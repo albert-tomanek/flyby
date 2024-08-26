@@ -285,8 +285,24 @@ namespace FlyBy
 					null,
 					(@this, li) => {
 						((Gtk.Label) li.child).label = ((FlyBy.Frame) li.item).get_name();
+
+						ulong handler = ((FlyBy.Frame) li.item).notify["hidden"].connect(() => {
+							if (((FlyBy.Frame) li.item).hidden == true)
+							{
+								li.child.add_css_class("hidden");
+							}
+							else
+							{
+								li.child.remove_css_class("hidden");
+							}
+						});
+						li.set_data<ulong>("hidden-notify", handler);
+
+						li.item.notify_property("hidden");
 					},
-					null
+					(@this, li) => {
+						li.item.disconnect(li.get_data<ulong>("hidden-notify"));
+					}
 				)
 			});
 
@@ -296,7 +312,10 @@ namespace FlyBy
 				{
 					this.play_button.icon_name = "media-playback-stop-symbolic";
 					this.play_state = 1;
-					Timeout.add((uint) (1000 / this.fps_adj.value), () => { this.advance_frame_recursive(); return false; });
+					Timeout.add(
+						(uint) (1000 / this.fps_adj.value),
+						() => { this.advance_frame_recursive(); return false; }
+					);
 				}
 				else
 				{
@@ -343,7 +362,10 @@ namespace FlyBy
 			this.position_adj.value += this.play_state;	// either 1 or -1
 
 			if (this.play_state != 0)	// If it is, they've asked us to stop.
-				Timeout.add((uint) (1000 / this.fps_adj.value), () => { this.advance_frame_recursive(); return false; });	// We need to renew this every time because they might have changed the fps setting while we were playing.
+				Timeout.add(
+					(this.selection.selected_item as Frame).hidden ? 0 : (uint) (1000 / this.fps_adj.value),
+					() => { this.advance_frame_recursive(); return false; }
+				);	// We need to renew this every time because they might have changed the fps setting while we were playing.
 		}
 
 		void setup_row(Gtk.ListItem li)
@@ -473,7 +495,7 @@ namespace FlyBy
 
 			for (int i = 0; i < cur.count_elements(); i++)
 			{
-				//  yield;
+				//  yield;	// FIXME
 				message(@"$(i)");
 				var frame = new FrameInMem();
 

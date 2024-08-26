@@ -37,7 +37,9 @@
                     <property name="css-classes">stage</property>
                     <property name="height-request">300</property>
                     <child>
-                      <object class="GtkPicture" id="view"/>
+                      <object class="GtkPicture" id="view">
+                        <property name="hexpand">True</property>
+                      </object>
                     </child>
                   </object>
                 </child>

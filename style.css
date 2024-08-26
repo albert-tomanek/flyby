@@ -7,3 +7,7 @@
 .controls {
 	/* max-width: 1000px; */
 }
+
+.hidden {
+	color: lightgray;
+}
