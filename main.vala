@@ -5,22 +5,37 @@
 // backwards: https://gstreamer.freedesktop.org/documentation/additional/design/trickmodes.html?gi-language=c
 // images in Gtk frames: https://stackoverflow.com/questions/70921068/drag-and-drop-with-gtk4-connecting-dragsource-and-droptarget-via-contentprovide
 
+// TODO:
+// - img offset
+// - anaglyph
+
 namespace FlyBy
 {
 	public class App : Gtk.Application {
 		public App () {
 			Object(
 				application_id: "com.github.albert-tomanek.flyby",
-				flags: ApplicationFlags.FLAGS_NONE
+				flags: ApplicationFlags.HANDLES_OPEN
 			);
 		}
 
 		protected override void activate () {
 			var win = new FlyBy.MainWindow(this);
-			win.show ();
-
 			this.add_window(win);
 			win.show();
+		}
+
+		protected override void open (File[] files, string hint) {
+			foreach (var file in files)
+			{
+				var win = new FlyBy.MainWindow(this);
+				this.add_window(win);
+				win.show();
+
+				win.open.begin(file, (_, ctx) => {
+					win.open.end(ctx);
+				});
+			}
 		}
 
 		public static int main(string[] args)
@@ -163,7 +178,8 @@ namespace FlyBy
 					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
 						select_multiple = false,
 						filter = App.ff_flyby
-					};					
+					};
+					d.set_current_name(".flyby");
 					d.show();
 		
 					d.response.connect((r) => {
@@ -203,108 +219,122 @@ namespace FlyBy
 				_botched_flush_pipeline();
 			});
 
-			/* Frame list */
-			var dnd_drop = new Gtk.DropTarget(Type.INVALID, Gdk.DragAction.COPY);
-			dnd_drop.set_gtypes({typeof(Gdk.FileList)});
-			dnd_drop.on_drop.connect((value, x, y) => {
-				if (value.holds(typeof(Gdk.FileList)))
-				{
-					var files = (Gdk.FileList) value.get_boxed();
-					bool at_least_one_matched = false;
-					files.get_files().foreach((file) => {
-						var file_info = file.query_info("standard::*", 0);
-						if (App.ff_images.match(file_info))
-						{					
-							this.frames.append(new FrameFromDisk(file));
-							at_least_one_matched = true;
-						}
-					});
-					return at_least_one_matched;
-				}
-				return false;
-			});
-
-			var keypress = new Gtk.EventControllerKey();
-			keypress.key_pressed.connect((keyval, keycode, mod_state) => {
-				if (keyval == Gdk.Key.Delete)
-				{
-					if (this.frames.get_n_items() > 0)
+			{
+				var keypress = new Gtk.EventControllerKey();
+				keypress.key_pressed.connect((keyval, keycode, mod_state) => {
+					if (keyval == Gdk.Key.n && (mod_state & Gdk.ModifierType.CONTROL_MASK) != 0)
 					{
-						this.frames.remove(this.selection.selected);
-						return true;
+						this.application.activate();
 					}
-				}
-				return false;
-			});
+					return false;
+				});
+				(this as Gtk.Widget).add_controller(keypress);
+			}
 
-			this.frame_listview.add_controller(dnd_drop);
-			this.frame_listview.add_controller(keypress);
-
-			this.selection = new Gtk.SingleSelection(null) {
-				autoselect = true,
-				can_unselect = false,
-				model = this.frames
-			};
-
-			this.frame_listview.model = this.selection;
-			this.frame_listview.model.notify["selected-item"].connect(() => {
-				// When the selected frame changes
-
-				// Stop listening to changes in the old frame.
-				if (current_frame_cache_binding != null)
-					current_frame_cache_binding.unbind();
-
-				// Loading is async so we actually have to wait until the property appears
-				current_frame_cache_binding = ((this.frame_listview.model as Gtk.SingleSelection).selected_item as Frame).bind_property(
-					"cache",
-					this.view,
-					"paintable",
-					BindingFlags.SYNC_CREATE,
-					(b, src, ref dest) => {
-						if (src.get_object() != null)	// May still be loading
-							dest.set_object(Gdk.Texture.for_pixbuf(src.get_object() as Gdk.Pixbuf));
-						return true;
-					}
-				);
-			});
-
-			this.frame_listview.append_column(new Gtk.ColumnViewColumn(null, null) {
-				title = "Frame",
-				expand = true,
-				resizable = true,
-				
-				factory = new_signal_list_item_factory(
-					(@this, li) => {
-						li.child = new Gtk.Label(null) {
-							halign = Gtk.Align.START,
-							hexpand = true,
-							ellipsize = Pango.EllipsizeMode.END
-						};
-						setup_row(li);
-					},
-					null,
-					(@this, li) => {
-						((Gtk.Label) li.child).label = ((FlyBy.Frame) li.item).get_name();
-
-						ulong handler = ((FlyBy.Frame) li.item).notify["hidden"].connect(() => {
-							if (((FlyBy.Frame) li.item).hidden == true)
-							{
-								li.child.add_css_class("hidden");
-							}
-							else
-							{
-								li.child.remove_css_class("hidden");
+			/* Frame list */
+			{
+				var dnd_drop = new Gtk.DropTarget(Type.INVALID, Gdk.DragAction.COPY);
+				dnd_drop.set_gtypes({typeof(Gdk.FileList)});
+				dnd_drop.on_drop.connect((value, x, y) => {
+					if (value.holds(typeof(Gdk.FileList)))
+					{
+						var files = (Gdk.FileList) value.get_boxed();
+						bool at_least_one_matched = false;
+						files.get_files().foreach((file) => {
+							var file_info = file.query_info("standard::*", 0);
+							if (App.ff_images.match(file_info))
+							{					
+								this.frames.append(new FrameFromDisk(file));
+								at_least_one_matched = true;
 							}
 						});
-						li.set_data<ulong>("hidden-notify", handler);
-
-						li.item.notify_property("hidden");
-					},
-					(@this, li) => {
-						li.item.disconnect(li.get_data<ulong>("hidden-notify"));
+						return at_least_one_matched;
 					}
-				)
-			});
+					return false;
+				});
+
+				var keypress = new Gtk.EventControllerKey();
+				keypress.key_pressed.connect((keyval, keycode, mod_state) => {
+					if (keyval == Gdk.Key.Delete)
+					{
+						if (this.frames.get_n_items() > 0)
+						{
+							this.frames.remove(this.selection.selected);
+							return true;
+						}
+					}
+					return false;
+				});
+
+				this.frame_listview.add_controller(dnd_drop);
+				this.frame_listview.add_controller(keypress);
+
+				this.selection = new Gtk.SingleSelection(null) {
+					autoselect = true,
+					can_unselect = false,
+					model = this.frames
+				};
+
+				this.frame_listview.model = this.selection;
+				this.frame_listview.model.notify["selected-item"].connect(() => {
+					// When the selected frame changes
+
+					// Stop listening to changes in the old frame.
+					if (current_frame_cache_binding != null)
+						current_frame_cache_binding.unbind();
+
+					// Loading is async so we actually have to wait until the property appears
+					current_frame_cache_binding = ((this.frame_listview.model as Gtk.SingleSelection).selected_item as Frame).bind_property(
+						"cache",
+						this.view,
+						"paintable",
+						BindingFlags.SYNC_CREATE,
+						(b, src, ref dest) => {
+							if (src.get_object() != null)	// May still be loading
+								dest.set_object(Gdk.Texture.for_pixbuf(src.get_object() as Gdk.Pixbuf));
+							return true;
+						}
+					);
+				});
+
+				this.frame_listview.append_column(new Gtk.ColumnViewColumn(null, null) {
+					title = "Frame",
+					expand = true,
+					resizable = true,
+					
+					factory = new_signal_list_item_factory(
+						(@this, li) => {
+							li.child = new Gtk.Label(null) {
+								halign = Gtk.Align.START,
+								hexpand = true,
+								ellipsize = Pango.EllipsizeMode.END
+							};
+							setup_row(li);
+						},
+						null,
+						(@this, li) => {
+							((Gtk.Label) li.child).label = ((FlyBy.Frame) li.item).get_name();
+
+							ulong handler = ((FlyBy.Frame) li.item).notify["hidden"].connect(() => {
+								if (((FlyBy.Frame) li.item).hidden == true)
+								{
+									li.child.add_css_class("hidden");
+								}
+								else
+								{
+									li.child.remove_css_class("hidden");
+								}
+							});
+							li.set_data<ulong>("hidden-notify", handler);
+
+							li.item.notify_property("hidden");
+						},
+						(@this, li) => {
+							li.item.disconnect(li.get_data<ulong>("hidden-notify"));
+						}
+					)
+				});
+			}
 
 			/* Play controls */
 			this.play_button.notify["active"].connect(() => {
@@ -472,9 +502,11 @@ namespace FlyBy
 
 		/* Load/Save */
 
-		async void open(File file)
+		public async void open(File file)
 		{
-			message(@"open $(file.get_path())");
+			this.title = @"FlyBy – $(file.get_basename())";
+
+			bool present;
 			var arch = new Gsf.InfileZip(new Gsf.InputStdio(file.get_path()));
 			var media_dir = arch.child_by_name("media") as Gsf.InfileZip;
 
@@ -489,6 +521,10 @@ namespace FlyBy
 			var info = parser.get_root();
 
 			var cur = new Json.Reader(info);
+
+			if (cur.read_member("fps"))
+				this.fps_adj.value = cur.get_double_value();
+			cur.end_member();
 			
 			/* Load frames */
 			cur.read_member("frames");
@@ -503,8 +539,8 @@ namespace FlyBy
 					cur.read_member("filename");
 					frame.filename = cur.get_string_value();
 					cur.end_member();
-					cur.read_member("hidden");
-					frame.hidden = cur.get_boolean_value();
+					if (cur.read_member("hidden"))
+						frame.hidden = cur.get_boolean_value();
 					cur.end_member();
 				cur.end_element();
 				
@@ -518,8 +554,10 @@ namespace FlyBy
 			cur.end_member();
 		}
 
-		async void save(File file)
+		public async void save(File file)
 		{
+			this.title = @"FlyBy – $(file.get_basename())";
+
 			var arch = new Gsf.OutfileZip(new Gsf.OutputStdio(file.get_path()));
 
 			/* Write manifest */
@@ -528,6 +566,9 @@ namespace FlyBy
 			Json.Builder builder = new Json.Builder ();
 			{
 				builder.begin_object ();
+
+				builder.set_member_name ("fps");
+				builder.add_double_value(this.fps_adj.value);
 
 				builder.set_member_name ("frames");
 				builder.begin_array ();
@@ -538,8 +579,10 @@ namespace FlyBy
 					builder.begin_object();
 					builder.set_member_name("filename");
 					builder.add_string_value(frame.get_name());
-					builder.set_member_name("hidden");
-					builder.add_boolean_value(frame.hidden);
+					if (frame.hidden) {
+						builder.set_member_name("hidden");
+						builder.add_boolean_value(frame.hidden);
+					}
 					builder.end_object ();
 				}
 				builder.end_array ();
@@ -547,7 +590,10 @@ namespace FlyBy
 				builder.end_object ();
 			}
 
-			var gen = new Json.Generator() { root = builder.get_root() };
+			var gen = new Json.Generator() {
+				root = builder.get_root(),
+				pretty = true
+			};
 
 			info_file.puts(gen.to_data(null));
 			info_file.close();
