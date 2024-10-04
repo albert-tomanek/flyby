@@ -124,12 +124,18 @@ namespace FlyBy
 					old_frame_l.disconnect(frame_l_notify_binding);
 
 				// Loading is async so we actually have to wait until the property appears
-				frame_l_notify_binding = frame_l.notify.connect(() => { this.queue_draw(); });
+				frame_l_notify_binding = frame_l.notify.connect(() => {
+					this.refresh_pixbuf();
+					this.queue_draw();
+				});
 				old_frame_l = frame_l;
+
+				// We just got a new frame_l and that means also a new frame_l.cache. Trigger a redraw.
+				frame_l.notify_property("cache");
 			});
 
 			this.set_draw_func((_, cr, w, h) => { this.draw(cr); });
-			this.resize.connect((w, h) => { this.refresh_pixbuf(w, h); });
+			this.resize.connect(() => { this.refresh_pixbuf(); });
 		}
 
 		private void draw(Cairo.Context cr)
@@ -138,10 +144,43 @@ namespace FlyBy
 			cr.paint();
 		}
 
-		private void refresh_pixbuf(int? width = null, int? height = null)
+		private void refresh_pixbuf()
 		{
-			this.pixbuf = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, (width ?? this.pixbuf.width) - 20, (height ?? this.pixbuf.height) - 20);
-			this.pixbuf.fill(0x008000ff);
+			this.pixbuf = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, this.get_width(), this.get_height());
+			
+			if (this.frame_l != null && this.pixbuf != null)
+				if (this.frame_l.cache != null)
+				{
+					double src_aspect  = (double) this.frame_l.cache.width  / (double) this.frame_l.cache.height;
+					double dest_aspect = (double) this.pixbuf.width / (double) this.pixbuf.height;
+
+					var letterbox = Gdk.Rectangle();
+
+					if (src_aspect > dest_aspect) {
+						letterbox.width  = this.pixbuf.width;
+						letterbox.height = (int) (letterbox.width / src_aspect);
+						letterbox.x = 0;
+						letterbox.y = (this.pixbuf.height - letterbox.height) / 2;
+					} else {
+						letterbox.height = this.pixbuf.height;
+						letterbox.width  = (int) (letterbox.height * src_aspect);
+						letterbox.x = (this.pixbuf.width - letterbox.width) / 2;
+						letterbox.y = 0;
+					}
+
+					this.frame_l.cache.scale(
+						this.pixbuf,
+						letterbox.x,
+						letterbox.y,
+						letterbox.width,
+						letterbox.height,
+						letterbox.x,
+						letterbox.y,
+						((double) letterbox.width  / this.frame_l.cache.width),
+						((double) letterbox.height / this.frame_l.cache.height),
+						Gdk.InterpType.NEAREST
+					);
+				}
 		}
 	}
 
