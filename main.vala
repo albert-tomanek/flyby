@@ -67,8 +67,8 @@ namespace FlyBy
 		public Gdk.Pixbuf? cache { get; set; default = null; }
 
 		public bool hidden  { get; set; default = false; }
-		public int offset_x { get; set; default = 0; }
-		public int offset_y { get; set; default = 0; }
+		public double offset_x { get; set; default = 0; }	// as percentage of width
+		public double offset_y { get; set; default = 0; }	// as percentage of height
 
 		public abstract string get_name();
 	}
@@ -108,7 +108,7 @@ namespace FlyBy
 
 	class Stage : Gtk.DrawingArea
 	{
-		public Frame? frame_l { get; set; }
+		public Frame frame_l { get; set; }
 		unowned Frame? old_frame_l;		// for disconnecting `notify` handler.
 		ulong frame_l_notify_binding;
 
@@ -136,12 +136,71 @@ namespace FlyBy
 
 			this.set_draw_func((_, cr, w, h) => { this.draw(cr); });
 			this.resize.connect(() => { this.refresh_pixbuf(); });
+
+			// UI stuff
+
+			// Drag
+			var drag = new Gtk.GestureDrag() {
+				button = Gdk.BUTTON_PRIMARY,
+			};
+			this.add_controller(drag);
+
+			double old_offset_x, old_offset_y;
+			drag.drag_begin.connect(() => {
+				old_offset_x = this.frame_l.offset_x;
+				old_offset_y = this.frame_l.offset_y;
+			});
+			drag.drag_update.connect((dx, dy) => {
+				var letterbox = this.get_letterbox();
+
+				this.frame_l.offset_x = old_offset_x + (dx / letterbox.width);
+				this.frame_l.offset_y = old_offset_y + (dy / letterbox.height);
+			});
+
+			// Double click (ie. reset)
+			var dclick = new Gtk.GestureClick() {
+				button = Gdk.BUTTON_PRIMARY,
+			};
+			this.add_controller(dclick);
+
+			dclick.released.connect((nth_click, x, y) => {
+				if (nth_click == 2)
+				{
+					this.frame_l.offset_x = 0;
+					this.frame_l.offset_y = 0;					
+				}
+			});
 		}
 
 		private void draw(Cairo.Context cr)
 		{
 			Gdk.cairo_set_source_pixbuf(cr, this.pixbuf, 0, 0);
 			cr.paint();
+		}
+
+		private Gdk.Rectangle get_letterbox()
+		requires (this.pixbuf != null)
+		requires (this.frame_l.cache != null)
+		{
+			// Work out the size and position of the scaled image
+			double src_aspect  = (double) this.frame_l.cache.width  / (double) this.frame_l.cache.height;
+			double dest_aspect = (double) this.pixbuf.width / (double) this.pixbuf.height;
+
+			var letterbox = Gdk.Rectangle();
+
+			if (src_aspect > dest_aspect) {
+				letterbox.width  = this.pixbuf.width;
+				letterbox.height = (int) (letterbox.width / src_aspect);
+				letterbox.x = 0;
+				letterbox.y = (this.pixbuf.height - letterbox.height) / 2;
+			} else {
+				letterbox.height = this.pixbuf.height;
+				letterbox.width  = (int) (letterbox.height * src_aspect);
+				letterbox.x = (this.pixbuf.width - letterbox.width) / 2;
+				letterbox.y = 0;
+			}
+
+			return letterbox;
 		}
 
 		private void refresh_pixbuf()
@@ -151,34 +210,30 @@ namespace FlyBy
 			if (this.frame_l != null && this.pixbuf != null)
 				if (this.frame_l.cache != null)
 				{
-					double src_aspect  = (double) this.frame_l.cache.width  / (double) this.frame_l.cache.height;
-					double dest_aspect = (double) this.pixbuf.width / (double) this.pixbuf.height;
+					var letterbox = this.get_letterbox();
+					var scaled = this.frame_l.cache.scale_simple(letterbox.width, letterbox.height, Gdk.InterpType.NEAREST);
 
-					var letterbox = Gdk.Rectangle();
+					// Copy the appropriate part of the image with regards to frame offset
+					var position = Gdk.Rectangle() {
+						x = letterbox.x + (int) (this.frame_l.offset_x * letterbox.width),
+						y = letterbox.y + (int) (this.frame_l.offset_y * letterbox.height),
+						width  = letterbox.width,
+						height = letterbox.height,
+					};
 
-					if (src_aspect > dest_aspect) {
-						letterbox.width  = this.pixbuf.width;
-						letterbox.height = (int) (letterbox.width / src_aspect);
-						letterbox.x = 0;
-						letterbox.y = (this.pixbuf.height - letterbox.height) / 2;
-					} else {
-						letterbox.height = this.pixbuf.height;
-						letterbox.width  = (int) (letterbox.height * src_aspect);
-						letterbox.x = (this.pixbuf.width - letterbox.width) / 2;
-						letterbox.y = 0;
-					}
+					Gtk.Allocation bounds;
+					Gdk.Rectangle position_clipped;
+					this.get_allocation(out bounds);
+					bounds.intersect(position, out position_clipped);
 
-					this.frame_l.cache.scale(
+					scaled.copy_area(
+						(position.x < position_clipped.x) ? (position_clipped.x - position.x) : 0,	// src_x
+						(position.y < position_clipped.y) ? (position_clipped.y - position.y) : 0,	// src_y
+						position_clipped.width,		// width
+						position_clipped.height,	// height
 						this.pixbuf,
-						letterbox.x,
-						letterbox.y,
-						letterbox.width,
-						letterbox.height,
-						letterbox.x,
-						letterbox.y,
-						((double) letterbox.width  / this.frame_l.cache.width),
-						((double) letterbox.height / this.frame_l.cache.height),
-						Gdk.InterpType.NEAREST
+						position_clipped.x,	// dest_x
+						position_clipped.y	// dest_y
 					);
 				}
 		}
@@ -294,6 +349,9 @@ namespace FlyBy
 		void init_ui()
 		{
 			this.stage_box.append(this.stage);
+			this.frames.bind_property("n-items", this.stage, "visible", BindingFlags.SYNC_CREATE, (_, src, ref dst) => {	// Only show the stage when a frame can be selected. This lets us avoid a null frame state in FlyBy.Stage code
+				dst.set_boolean(src.get_uint() > 0); return true;
+			});
 
 			//  this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
 			this.redboost_adj.notify["value"].connect(() => {
@@ -599,7 +657,7 @@ namespace FlyBy
 			for (int i = 0; i < cur.count_elements(); i++)
 			{
 				//  yield;	// FIXME
-				message(@"$(i)");
+				//  message(@"$(i)");
 				var frame = new FrameInMem();
 
 				cur.read_element(i);
@@ -612,11 +670,11 @@ namespace FlyBy
 					cur.end_member();
 
 					if (cur.read_member("offset-x"))
-						frame.offset_x = (int) cur.get_int_value();
+						frame.offset_x = cur.get_double_value();
 					cur.end_member();
 
 					if (cur.read_member("offset-y"))
-						frame.offset_y = (int) cur.get_int_value();
+						frame.offset_y = cur.get_double_value();
 					cur.end_member();
 				cur.end_element();
 				
@@ -662,10 +720,10 @@ namespace FlyBy
 						}
 
 						builder.set_member_name("offset-x");
-						builder.add_int_value(frame.offset_x);
+						builder.add_double_value(frame.offset_x);
 
 						builder.set_member_name("offset-y");
-						builder.add_int_value(frame.offset_y);
+						builder.add_double_value(frame.offset_y);
 					builder.end_object ();
 				}
 				builder.end_array ();
