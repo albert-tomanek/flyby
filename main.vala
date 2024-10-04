@@ -66,7 +66,9 @@ namespace FlyBy
 	{
 		public Gdk.Pixbuf? cache { get; set; default = null; }
 
-		public bool hidden { get; set; default = false; }
+		public bool hidden  { get; set; default = false; }
+		public int offset_x { get; set; default = 0; }
+		public int offset_y { get; set; default = 0; }
 
 		public abstract string get_name();
 	}
@@ -104,12 +106,51 @@ namespace FlyBy
 		}
 	}
 
+	class Stage : Gtk.DrawingArea
+	{
+		public Frame? frame_l { get; set; }
+		unowned Frame? old_frame_l;		// for disconnecting `notify` handler.
+		ulong frame_l_notify_binding;
+
+		Gdk.Pixbuf pixbuf;
+
+		construct {
+			this.hexpand = this.vexpand = true;
+			this.halign  = this.valign  = Gtk.Align.FILL;
+
+			this.notify["frame-l"].connect(() => {
+				// Stop listening to changes in the old frame.
+				if (old_frame_l != null)
+					old_frame_l.disconnect(frame_l_notify_binding);
+
+				// Loading is async so we actually have to wait until the property appears
+				frame_l_notify_binding = frame_l.notify.connect(() => { this.queue_draw(); });
+				old_frame_l = frame_l;
+			});
+
+			this.set_draw_func((_, cr, w, h) => { this.draw(cr); });
+			this.resize.connect((w, h) => { this.refresh_pixbuf(w, h); });
+		}
+
+		private void draw(Cairo.Context cr)
+		{
+			Gdk.cairo_set_source_pixbuf(cr, this.pixbuf, 0, 0);
+			cr.paint();
+		}
+
+		private void refresh_pixbuf(int? width = null, int? height = null)
+		{
+			this.pixbuf = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, (width ?? this.pixbuf.width) - 20, (height ?? this.pixbuf.height) - 20);
+			this.pixbuf.fill(0x008000ff);
+		}
+	}
+
 	[GtkTemplate (ui = "/com/github/albert-tomanek/flyby/main.ui")]
 	class MainWindow : Gtk.ApplicationWindow
 	{
 		/* UI */
-		[GtkChild] Gtk.Box          stage;
-		[GtkChild] Gtk.Picture      view;
+		[GtkChild] Gtk.Box          stage_box;
+		           FlyBy.Stage      stage = new FlyBy.Stage();
 
 		[GtkChild] Gtk.ColumnView   frame_listview;
 
@@ -141,7 +182,6 @@ namespace FlyBy
 		
 		GLib.ListStore frames = new ListStore(typeof(FlyBy.Frame));
 		Gtk.SingleSelection selection;
-		Binding? current_frame_cache_binding = null;
 
 		Gst.ClockTime duration;
 		Gst.ClockTime position;
@@ -159,6 +199,7 @@ namespace FlyBy
 
 		public MainWindow(Gtk.Application app)
 		{
+			
 			this.application = app;
 			this.load_style();
 		}
@@ -213,6 +254,8 @@ namespace FlyBy
 
 		void init_ui()
 		{
+			this.stage_box.append(this.stage);
+
 			//  this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
 			this.redboost_adj.notify["value"].connect(() => {
 				this.anablend.set("red_coef", this.redboost_adj.value);
@@ -279,22 +322,7 @@ namespace FlyBy
 				this.frame_listview.model.notify["selected-item"].connect(() => {
 					// When the selected frame changes
 
-					// Stop listening to changes in the old frame.
-					if (current_frame_cache_binding != null)
-						current_frame_cache_binding.unbind();
-
-					// Loading is async so we actually have to wait until the property appears
-					current_frame_cache_binding = ((this.frame_listview.model as Gtk.SingleSelection).selected_item as Frame).bind_property(
-						"cache",
-						this.view,
-						"paintable",
-						BindingFlags.SYNC_CREATE,
-						(b, src, ref dest) => {
-							if (src.get_object() != null)	// May still be loading
-								dest.set_object(Gdk.Texture.for_pixbuf(src.get_object() as Gdk.Pixbuf));
-							return true;
-						}
-					);
+					this.stage.frame_l = (this.frame_listview.model as Gtk.SingleSelection).selected_item as Frame;
 				});
 
 				this.frame_listview.append_column(new Gtk.ColumnViewColumn(null, null) {
@@ -539,8 +567,17 @@ namespace FlyBy
 					cur.read_member("filename");
 					frame.filename = cur.get_string_value();
 					cur.end_member();
+
 					if (cur.read_member("hidden"))
 						frame.hidden = cur.get_boolean_value();
+					cur.end_member();
+
+					if (cur.read_member("offset-x"))
+						frame.offset_x = (int) cur.get_int_value();
+					cur.end_member();
+
+					if (cur.read_member("offset-y"))
+						frame.offset_y = (int) cur.get_int_value();
 					cur.end_member();
 				cur.end_element();
 				
@@ -577,12 +614,19 @@ namespace FlyBy
 					var frame  = this.frames.get_item(i) as Frame;
 
 					builder.begin_object();
-					builder.set_member_name("filename");
-					builder.add_string_value(frame.get_name());
-					if (frame.hidden) {
-						builder.set_member_name("hidden");
-						builder.add_boolean_value(frame.hidden);
-					}
+						builder.set_member_name("filename");
+						builder.add_string_value(frame.get_name());
+
+						if (frame.hidden) {
+							builder.set_member_name("hidden");
+							builder.add_boolean_value(frame.hidden);
+						}
+
+						builder.set_member_name("offset-x");
+						builder.add_int_value(frame.offset_x);
+
+						builder.set_member_name("offset-y");
+						builder.add_int_value(frame.offset_y);
 					builder.end_object ();
 				}
 				builder.end_array ();
