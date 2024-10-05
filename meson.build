@@ -12,6 +12,7 @@ executable('main',
 	sources: [
 		'main.vala',
 		'misc.vala',
+		'anaglyph.vala',
 	],
 	dependencies: [
 		dependency('glib-2.0'),

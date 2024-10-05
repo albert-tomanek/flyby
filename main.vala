@@ -5,10 +5,6 @@
 // backwards: https://gstreamer.freedesktop.org/documentation/additional/design/trickmodes.html?gi-language=c
 // images in Gtk frames: https://stackoverflow.com/questions/70921068/drag-and-drop-with-gtk4-connecting-dragsource-and-droptarget-via-contentprovide
 
-// TODO:
-// - img offset
-// - anaglyph
-
 namespace FlyBy
 {
 	public class App : Gtk.Application {
@@ -108,9 +104,16 @@ namespace FlyBy
 
 	class Stage : Gtk.DrawingArea
 	{
+		public AnaglyphMethod method { get; set; }
+		public float red_coef { get; set; }
+
 		public Frame frame_l { get; set; }
 		unowned Frame? old_frame_l;		// for disconnecting `notify` handler.
 		ulong frame_l_notify_binding;
+
+		public Frame? frame_r { get; set; }
+		unowned Frame? old_frame_r;		// for disconnecting `notify` handler.
+		ulong frame_r_notify_binding;
 
 		Gdk.Pixbuf pixbuf;
 
@@ -128,10 +131,33 @@ namespace FlyBy
 					this.refresh_pixbuf();
 					this.queue_draw();
 				});
-				old_frame_l = frame_l;
-
 				// We just got a new frame_l and that means also a new frame_l.cache. Trigger a redraw.
 				frame_l.notify_property("cache");
+				
+				old_frame_l = frame_l;
+			});
+			this.notify["frame-r"].connect(() => {
+				if (old_frame_r != null)
+					old_frame_r.disconnect(frame_r_notify_binding);
+
+				if (frame_r != null)
+				{
+					frame_r_notify_binding = frame_r.notify.connect(() => {
+						this.refresh_pixbuf();
+						this.queue_draw();
+					});
+					frame_r.notify_property("cache");
+				}
+
+				old_frame_r = frame_r;
+			});
+			this.notify["method"].connect(() => {
+				this.refresh_pixbuf();
+				this.queue_draw();
+			});
+			this.notify["red-coef"].connect(() => {
+				this.refresh_pixbuf();
+				this.queue_draw();
 			});
 
 			this.set_draw_func((_, cr, w, h) => { this.draw(cr); });
@@ -179,24 +205,23 @@ namespace FlyBy
 		}
 
 		private Gdk.Rectangle get_letterbox()
-		requires (this.pixbuf != null)
 		requires (this.frame_l.cache != null)
 		{
 			// Work out the size and position of the scaled image
 			double src_aspect  = (double) this.frame_l.cache.width  / (double) this.frame_l.cache.height;
-			double dest_aspect = (double) this.pixbuf.width / (double) this.pixbuf.height;
+			double dest_aspect = (double) this.get_width() / (double) this.get_height();
 
 			var letterbox = Gdk.Rectangle();
 
 			if (src_aspect > dest_aspect) {
-				letterbox.width  = this.pixbuf.width;
+				letterbox.width  = this.get_width();
 				letterbox.height = (int) (letterbox.width / src_aspect);
 				letterbox.x = 0;
-				letterbox.y = (this.pixbuf.height - letterbox.height) / 2;
+				letterbox.y = (this.get_height() - letterbox.height) / 2;
 			} else {
-				letterbox.height = this.pixbuf.height;
+				letterbox.height = this.get_height();
 				letterbox.width  = (int) (letterbox.height * src_aspect);
-				letterbox.x = (this.pixbuf.width - letterbox.width) / 2;
+				letterbox.x = (this.get_width() - letterbox.width) / 2;
 				letterbox.y = 0;
 			}
 
@@ -205,37 +230,54 @@ namespace FlyBy
 
 		private void refresh_pixbuf()
 		{
-			this.pixbuf = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, this.get_width(), this.get_height());
-			
-			if (this.frame_l != null && this.pixbuf != null)
-				if (this.frame_l.cache != null)
+			if (this.frame_l != null)
+			{
+				var pixbuf_l = this.render_frame(this.frame_l);
+				
+				if (this.method == AnaglyphMethod.NONE || this.frame_r == null)
+					this.pixbuf = pixbuf_l;
+				else
 				{
-					var letterbox = this.get_letterbox();
-					var scaled = this.frame_l.cache.scale_simple(letterbox.width, letterbox.height, Gdk.InterpType.NEAREST);
-
-					// Copy the appropriate part of the image with regards to frame offset
-					var position = Gdk.Rectangle() {
-						x = letterbox.x + (int) (this.frame_l.offset_x * letterbox.width),
-						y = letterbox.y + (int) (this.frame_l.offset_y * letterbox.height),
-						width  = letterbox.width,
-						height = letterbox.height,
-					};
-
-					Gtk.Allocation bounds;
-					Gdk.Rectangle position_clipped;
-					this.get_allocation(out bounds);
-					bounds.intersect(position, out position_clipped);
-
-					scaled.copy_area(
-						(position.x < position_clipped.x) ? (position_clipped.x - position.x) : 0,	// src_x
-						(position.y < position_clipped.y) ? (position_clipped.y - position.y) : 0,	// src_y
-						position_clipped.width,		// width
-						position_clipped.height,	// height
-						this.pixbuf,
-						position_clipped.x,	// dest_x
-						position_clipped.y	// dest_y
-					);
+					var pixbuf_r = this.render_frame(this.frame_r);
+					this.pixbuf  = make_anaglyph(pixbuf_l, pixbuf_r, this.method, this.red_coef);
 				}
+			}
+		}
+
+		private Gdk.Pixbuf render_frame(Frame frame)
+		{
+			var render = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, this.get_width(), this.get_height());
+			
+			if (frame.cache != null)
+			{
+				var letterbox = this.get_letterbox();
+				var scaled = frame.cache.scale_simple(letterbox.width, letterbox.height, Gdk.InterpType.NEAREST);
+
+				// Copy the appropriate part of the image with regards to frame offset
+				var position = Gdk.Rectangle() {
+					x = letterbox.x + (int) (frame.offset_x * letterbox.width),
+					y = letterbox.y + (int) (frame.offset_y * letterbox.height),
+					width  = letterbox.width,
+					height = letterbox.height,
+				};
+
+				Gtk.Allocation bounds;
+				Gdk.Rectangle position_clipped;
+				this.get_allocation(out bounds);
+				bounds.intersect(position, out position_clipped);
+
+				scaled.copy_area(
+					(position.x < position_clipped.x) ? (position_clipped.x - position.x) : 0,	// src_x
+					(position.y < position_clipped.y) ? (position_clipped.y - position.y) : 0,	// src_y
+					position_clipped.width,		// width
+					position_clipped.height,	// height
+					render,
+					position_clipped.x,	// dest_x
+					position_clipped.y	// dest_y
+				);
+			}
+
+			return render;
 		}
 	}
 
@@ -255,13 +297,8 @@ namespace FlyBy
 		[GtkChild] Gtk.Adjustment   position_adj;
 		[GtkChild] Gtk.Adjustment   fps_adj;
 		
-		[GtkChild] Gtk.Adjustment   framediff_adj;
-		[GtkChild] Gtk.Scale        framediff_scale;
 		[GtkChild] Gtk.ComboBoxText ana_mode_box;
 		[GtkChild] Gtk.Adjustment   redboost_adj;
-
-		[GtkChild] Gtk.Dialog       export_dialog;
-		[GtkChild] Gtk.ProgressBar  export_progressbar;
 
 		/* Gst */
 		Gst.Pipeline pipeline;
@@ -353,11 +390,10 @@ namespace FlyBy
 				dst.set_boolean(src.get_uint() > 0); return true;
 			});
 
-			//  this.anablend.bind_property("method", this.ana_mode_box, "active", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
-			this.redboost_adj.notify["value"].connect(() => {
-				this.anablend.set("red_coef", this.redboost_adj.value);
-				_botched_flush_pipeline();
-			});
+			this.ana_mode_box.bind_property("active", this.stage, "method", BindingFlags.BIDIRECTIONAL);
+			this.ana_mode_box.active = 1;
+
+			this.redboost_adj.bind_property("value", this.stage, "red-coef", BindingFlags.SYNC_CREATE);
 
 			{
 				var keypress = new Gtk.EventControllerKey();
@@ -420,6 +456,11 @@ namespace FlyBy
 					// When the selected frame changes
 
 					this.stage.frame_l = (this.frame_listview.model as Gtk.SingleSelection).selected_item as Frame;
+					this.stage.frame_r = (Frame?) this.frame_listview.model.get_item((this.frame_listview.model as Gtk.SingleSelection).selected + 1);
+				});
+				this.frames.items_changed.connect((pos, removed, added) => {
+					if (pos == this.selection.selected + 1)	// A change to the frame after the selected one should be paid as much attention to as a change to the actual selected one. Since both are used to create the anaglyph image.
+						this.frame_listview.model.notify_property("selected-item");
 				});
 
 				this.frame_listview.append_column(new Gtk.ColumnViewColumn(null, null) {
@@ -498,15 +539,15 @@ namespace FlyBy
 			this.stage.add_controller(scroll);
 			
 			/* Modal dialogs */
-			this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
-			this.export_start.connect(() => {
-				this.export_dialog.set_transient_for(this);
-				this.export_dialog.show();
-			});
-			this.export_finished.connect(() => {
-				this.export_dialog.set_transient_for(null);
-				this.export_dialog.hide();
-			});
+			//  this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
+			//  this.export_start.connect(() => {
+			//  	this.export_dialog.set_transient_for(this);
+			//  	this.export_dialog.show();
+			//  });
+			//  this.export_finished.connect(() => {
+			//  	this.export_dialog.set_transient_for(null);
+			//  	this.export_dialog.hide();
+			//  });
 		}
 
 		void advance_frame_recursive()
@@ -600,29 +641,6 @@ namespace FlyBy
 				popover.popdown();
 				(li.item as Frame).hidden = !(li.item as Frame).hidden;
 			});
-		}
-
-		/* UI callbacks */
-		[GtkCallback]
-		void on_import()
-		{
-			var d = new Gtk.FileChooserDialog("Open video file", this, Gtk.FileChooserAction.OPEN, "Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK) {
-				select_multiple = false,
-				filter = new Gtk.FileFilter() {
-					name = "MP4 files",
-				},
-			};
-			d.filter.add_pattern("*.mp4");
-			
-			d.show();
-
-			d.response.connect((r) => {
-				if (r == Gtk.ResponseType.OK)
-					import_video(d.get_file().get_path());
-
-				d.close();
-			});
-			//  this.reset_adjustment();
 		}
 
 		/* Load/Save */
@@ -771,165 +789,6 @@ namespace FlyBy
 			}
 
 			arch.close();
-		}
-
-		/* Import/Export */
-		void import_video(string path)
-		{
-			pipeline.set_state(Gst.State.NULL);
-			this.src.set("uri", "file://" + path);
-			pipeline.set_state(Gst.State.PAUSED);
-			this.new_source();
-		}
-
-		void on_export()
-		{
-			/* Pick save location */
-			var d = new Gtk.FileChooserDialog("Export to file", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK) {
-				select_multiple = false,
-				filter = new Gtk.FileFilter() {
-					name = "MP4 files",
-				},
-			};
-			d.filter.add_pattern("*.mp4");
-			
-			d.show();
-
-			d.response.connect((r) => {
-				if (r == Gtk.ResponseType.OK)
-					this.export_start(d.get_file().get_path());
-
-				d.close();
-			});
-		}
-
-		[GtkCallback]
-		void on_export_dialog_response(int response)
-		{
-			if (response == Gtk.ResponseType.CANCEL)
-			{
-				this.pipeline.get_by_name("src").send_event(new Gst.Event.eos());
-				this.export_finished();
-			}
-		}
-
-		void add_export_branch()
-		{
-			// Uhh godd: https://stackoverflow.com/questions/74991007/gstreamer-dynamically-link-a-tee-while-pipline-is-playing
-			// Steps detailed here: https://raw.githubusercontent.com/genesi/gstreamer/master/docs/design/part-block.txt
-			// https://stackoverflow.com/questions/74932282/gstreamer-activate-deactivate-a-specific-tee-src-at-runtime/74932832#74932832
-
-			this.pipeline.add(this.export_bin);
-			this.export_tee.link(this.export_bin.get_by_name("first"));
-			this.export_bin.sync_state_with_parent();
-
-			//  this.export_tee_pad = this.export_tee.get_request_pad("src_%u");
-			//  this.export_bin.link_pads(this.export_tee);
-		}
-
-		void remove_export_branch()
-		{
-			// Assume state is NULL
-
-			this.export_tee.unlink(this.export_bin.get_by_name("first"));
-			this.pipeline.remove(this.export_bin);
-			//  this.export_bin.unlink(this.export_tee_pad);
-			//  this.export_tee.release_request_pad(this.export_tee_pad);
-			//  this.export_tee_pad = null;
-		}
-
-		bool export_branch_connected {
-			get {
-				return this.export_bin.get_by_name("first").get_static_pad("sink").is_linked();
-			}
-		}
-
-		//  void export_to_file(string path)
-		//  {
-		//  	/* Start Export */
-			
-			
-		//  	pipeline.set_state(Gst.State.NULL);
-		//  	var tee_pad = this.export_tee.get_request_pad('src_%u');
-		//  	export_bin.link(tee_pad);
-
-
-		//  	/* Show dialog */
-
-		//  	var d = new Gtk.Dialog.with_buttons("Exporting Video", this, Gtk.DialogFlags.MODAL | Gtk.DialogFlags.USE_HEADER_BAR, "Cancel", Gtk.ResponseType.CANCEL);
-		//  	var prog = new Gtk.ProgressBar() {
-		//  		show_text = true,
-		//  		text = "Exporting...",
-		//  		fraction = 0.4,
-		//  	};
-		//  	d.set_child(prog);
-		//  	d.show();
-
-		//  	d.response.connect((r) => {
-		//  		if (r == Gtk.ResponseType.CANCEL)
-		//  		{
-		//  			/* Cancel export */
-		//  			d.close();
-		//  		}
-		//  	});
-
-		//  	/* Connect the two */
-		//  	var bus = this.pipeline.get_bus();
-		//  	bus.add_signal_watch();
-		//  	ulong cb_handle = bus.message.connect((m) => {
-		//  		if (m.type == Gst.MessageType.EOS)
-		//  		{
-					//  export_bin.unlink(tee_pad);
-					//  this.export_tee.release_request_pad(tee_pad);
-
-		//  			Signal.remove_emission_hook(bus.message, cb_handle);
-		//  		}
-		//  	});
-		//  }
-
-		[GtkCallback]
-		void on_frame_difference_changed()
-		{
-			this.delay_pad_l.offset = (int64) ( double.max(0, this.framediff_adj.value) * 100000);
-			this.delay_pad_r.offset = (int64) (-double.min(0, this.framediff_adj.value) * 100000);
-
-			_botched_flush_pipeline();
-		}
-
-		void reset_adjustment()
-		{
-			int fps_num, fps_denom;
-			this.delay_pad_l.get_current_caps().get_structure(0).get_fraction("framerate", out fps_num, out fps_denom);
-			double fps = ((double) fps_num) / ((double) fps_denom);
-
-			this.framediff_adj.lower = -(2 * fps);
-			this.framediff_adj.upper =  (2 * fps);
-			this.framediff_adj.value =  0.2 * fps;	// default diff = 200ms
-
-			this.framediff_scale.clear_marks();
-			
-			for (double i = -2*fps; i <= 2*fps; i += 1/fps)
-			{
-				this.framediff_scale.add_mark(i, Gtk.PositionType.BOTTOM, i == 0 ? "0" : null);
-				message("%f", (float)i);
-			}
-		}
-
-		void _botched_flush_pipeline()
-		{
-			/* FIXME: I know it's stupid, but we get the current playback time and seek to it (in order to flush). */
-			Gst.State state;
-			this.pipeline.get_state(out state, null, Gst.CLOCK_TIME_NONE);
-			
-			var query = new Gst.Query.position(Gst.Format.TIME);
-			if (pipeline.query(query))
-			{
-				int64 time;
-				query.parse_position(null, out time);
-				this.pipeline.get_by_name("sink").send_event(new Gst.Event.seek(1.0, Gst.Format.TIME, Gst.SeekFlags.ACCURATE | Gst.SeekFlags.FLUSH, Gst.SeekType.SET, time, Gst.SeekType.NONE, 0));
-			}
-
-			this.pipeline.set_state(state);
 		}
 	}
 }
