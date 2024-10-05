@@ -1,0 +1,13 @@
+<schemalist>
+  <schema id="com.github.albert-tomanek.flyby" path="/com/github/albert-tomanek/flyby/" gettext-domain="flyby">
+
+    <key name="red-boost" type="d">
+      <default>1.0</default>
+      <summary>How much the red channel should be boosted by in anaglyphs.</summary>
+      <description>
+        In some anaglyphic glasses the red filter is darker than the blue filter. Boosting the red channel can compensate for this. This property is the coefficient that the red channel is multiplied by.
+      </description>
+    </key>
+
+  </schema>
+</schemalist>

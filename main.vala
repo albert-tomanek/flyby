@@ -105,7 +105,7 @@ namespace FlyBy
 	class Stage : Gtk.DrawingArea
 	{
 		public AnaglyphMethod method { get; set; }
-		public float red_coef { get; set; }
+		public double red_coef { get; set; }
 
 		public Frame frame_l { get; set; }
 		unowned Frame? old_frame_l;		// for disconnecting `notify` handler.
@@ -239,7 +239,7 @@ namespace FlyBy
 				else
 				{
 					var pixbuf_r = this.render_frame(this.frame_r);
-					this.pixbuf  = make_anaglyph(pixbuf_l, pixbuf_r, this.method, this.red_coef);
+					this.pixbuf  = make_anaglyph(pixbuf_l, pixbuf_r, this.method, (float) this.red_coef);
 				}
 			}
 		}
@@ -381,6 +381,10 @@ namespace FlyBy
 					});
 				}, null, null, null}
 			}, this);
+
+			//
+			var settings = new Settings ("com.github.albert-tomanek.flyby");
+			settings.bind("red-boost", this.stage, "red-coef", SettingsBindFlags.DEFAULT);
 		}
 
 		void init_ui()
@@ -393,7 +397,7 @@ namespace FlyBy
 			this.ana_mode_box.bind_property("active", this.stage, "method", BindingFlags.BIDIRECTIONAL);
 			this.ana_mode_box.active = 1;
 
-			this.redboost_adj.bind_property("value", this.stage, "red-coef", BindingFlags.SYNC_CREATE);
+			this.redboost_adj.bind_property("value", this.stage, "red-coef", BindingFlags.BIDIRECTIONAL);
 
 			{
 				var keypress = new Gtk.EventControllerKey();

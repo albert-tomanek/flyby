@@ -25,3 +25,8 @@ executable('main',
 		dependency('json-glib-1.0'),
 	],
 )
+
+install_data('com.github.albert-tomanek.flyby.gschema.xml', install_dir : get_option('datadir') / 'glib-2.0' / 'schemas')
+gnome.post_install(
+	glib_compile_schemas: true
+)
