@@ -11,7 +11,7 @@
     <child>
       <object class="GtkPaned">
         <child>
-          <object class="GtkBox">
+          <object class="GtkBox" id="sidebar">
             <property name="orientation">vertical</property>
             <property name="vexpand">True</property>
             <property name="width-request">200</property>
@@ -140,7 +140,7 @@
           <object class="GtkLabel">
             <property name="can-focus">False</property>
             <property name="can-target">False</property>
-            <property name="label">Anaglyph mode</property>
+            <property name="label">Anaglyph mode (A)</property>
           </object>
         </child>
         <child>

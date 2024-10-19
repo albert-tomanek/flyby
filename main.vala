@@ -66,7 +66,8 @@ namespace FlyBy
 		public double offset_x { get; set; default = 0; }	// as percentage of width
 		public double offset_y { get; set; default = 0; }	// as percentage of height
 
-		public abstract string get_name();
+		public abstract string get_display_name();
+		//  public abstract string get_save_name();		// without extension
 	}
 
 	class FrameFromDisk : Frame
@@ -86,7 +87,7 @@ namespace FlyBy
 			return yield new Gdk.Pixbuf.from_stream_async(stream);
 		}
 
-		public override string get_name()
+		public override string get_display_name()
 		{
 			return this.origin.get_basename();
 		}
@@ -96,7 +97,7 @@ namespace FlyBy
 	{
 		public string filename { get; set; }
 
-		public override string get_name()
+		public override string get_display_name()
 		{
 			return this.filename;
 		}
@@ -172,15 +173,22 @@ namespace FlyBy
 			this.add_controller(drag);
 
 			double old_offset_x, old_offset_y;
+			unowned Frame dragging_frame;
+
 			drag.drag_begin.connect(() => {
-				old_offset_x = this.frame_l.offset_x;
-				old_offset_y = this.frame_l.offset_y;
+				if (this.frame_r != null && this.method != AnaglyphMethod.NONE)
+					dragging_frame = this.frame_r;		// You generally want to be dragging the later frame as when aligning frames you tend to go from the top of the list down.
+				else
+					dragging_frame = this.frame_l;
+
+				old_offset_x = dragging_frame.offset_x;
+				old_offset_y = dragging_frame.offset_y;
 			});
 			drag.drag_update.connect((dx, dy) => {
 				var letterbox = this.get_letterbox();
 
-				this.frame_l.offset_x = old_offset_x + (dx / letterbox.width);
-				this.frame_l.offset_y = old_offset_y + (dy / letterbox.height);
+				dragging_frame.offset_x = old_offset_x + (dx / letterbox.width);
+				dragging_frame.offset_y = old_offset_y + (dy / letterbox.height);
 			});
 
 			// Double click (ie. reset)
@@ -288,6 +296,7 @@ namespace FlyBy
 		[GtkChild] Gtk.Box          stage_box;
 		           FlyBy.Stage      stage = new FlyBy.Stage();
 
+		[GtkChild] Gtk.Box          sidebar;
 		[GtkChild] Gtk.ColumnView   frame_listview;
 
 		[GtkChild] Gtk.Box          media_bar;
@@ -389,23 +398,24 @@ namespace FlyBy
 
 		void init_ui()
 		{
-			this.stage_box.append(this.stage);
-			this.frames.bind_property("n-items", this.stage, "visible", BindingFlags.SYNC_CREATE, (_, src, ref dst) => {	// Only show the stage when a frame can be selected. This lets us avoid a null frame state in FlyBy.Stage code
-				dst.set_boolean(src.get_uint() > 0); return true;
-			});
-
-			this.ana_mode_box.bind_property("active", this.stage, "method", BindingFlags.BIDIRECTIONAL);
-			this.ana_mode_box.active = 1;
-
-			this.redboost_adj.bind_property("value", this.stage, "red-coef", BindingFlags.BIDIRECTIONAL);
-
+			/* Global shortcuts */
 			{
 				var keypress = new Gtk.EventControllerKey();
 				keypress.key_pressed.connect((keyval, keycode, mod_state) => {
+					// New instance (Ctrl+n)
 					if (keyval == Gdk.Key.n && (mod_state & Gdk.ModifierType.CONTROL_MASK) != 0)
 					{
 						this.application.activate();
+						return true;
 					}
+
+					// Fullscreen (F11/Esc)
+					if (keyval == Gdk.Key.F11 || (keyval == Gdk.Key.Escape && this.fullscreened))
+					{
+						this.fullscreened = !this.fullscreened;
+						return true;
+					}
+
 					return false;
 				});
 				(this as Gtk.Widget).add_controller(keypress);
@@ -413,6 +423,8 @@ namespace FlyBy
 
 			/* Frame list */
 			{
+				this.bind_property("fullscreened", this.sidebar, "visible", BindingFlags.INVERT_BOOLEAN);
+
 				var dnd_drop = new Gtk.DropTarget(Type.INVALID, Gdk.DragAction.COPY);
 				dnd_drop.set_gtypes({typeof(Gdk.FileList)});
 				dnd_drop.on_drop.connect((value, x, y) => {
@@ -483,7 +495,7 @@ namespace FlyBy
 						},
 						null,
 						(@this, li) => {
-							((Gtk.Label) li.child).label = ((FlyBy.Frame) li.item).get_name();
+							((Gtk.Label) li.child).label = ((FlyBy.Frame) li.item).get_display_name();
 
 							ulong handler = ((FlyBy.Frame) li.item).notify["hidden"].connect(() => {
 								if (((FlyBy.Frame) li.item).hidden == true)
@@ -530,17 +542,30 @@ namespace FlyBy
 			this.frames.items_changed.connect(() => { this.position_adj.upper = (double) this.frames.get_n_items() - 1; });		// When the length changes
 
 			/* Stage */
-			var scroll = new Gtk.EventControllerScroll(
-				Gtk.EventControllerScrollFlags.VERTICAL |
-				Gtk.EventControllerScrollFlags.DISCRETE
-			);
-			scroll.scroll.connect((dx, dy) => {
-				this.position_adj.value += dy;
+			{
+				this.stage_box.append(this.stage);
 
-				return true;
-			});
+				this.frames.bind_property("n-items", this.stage, "visible", BindingFlags.SYNC_CREATE, (_, src, ref dst) => {	// Only show the stage when a frame can be selected. This lets us avoid a null frame state in FlyBy.Stage code
+					dst.set_boolean(src.get_uint() > 0); return true;
+				});
+	
+				this.ana_mode_box.bind_property("active", this.stage, "method", BindingFlags.BIDIRECTIONAL);
+				this.ana_mode_box.active = 1;
+	
+				this.redboost_adj.bind_property("value", this.stage, "red-coef", BindingFlags.BIDIRECTIONAL);
 
-			this.stage.add_controller(scroll);
+				var scroll = new Gtk.EventControllerScroll(
+					Gtk.EventControllerScrollFlags.VERTICAL |
+					Gtk.EventControllerScrollFlags.DISCRETE
+				);
+				scroll.scroll.connect((dx, dy) => {
+					this.position_adj.value += dy;
+
+					return true;
+				});
+
+				this.stage.add_controller(scroll);
+			}
 			
 			/* Modal dialogs */
 			//  this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
@@ -734,7 +759,7 @@ namespace FlyBy
 
 					builder.begin_object();
 						builder.set_member_name("filename");
-						builder.add_string_value(frame.get_name());
+						builder.add_string_value(frame.get_display_name());
 
 						if (frame.hidden) {
 							builder.set_member_name("hidden");
@@ -768,7 +793,7 @@ namespace FlyBy
 			{
 				Frame frame = this.frames.get_item(i) as Frame;
 				Bytes frame_encoded = null;
-				message("saving "+frame.get_name());
+				message("saving "+frame.get_display_name());
 
 				if (frame is FrameFromDisk)
 				{
@@ -786,7 +811,7 @@ namespace FlyBy
 					frame_encoded = new Bytes.take(bytes);
 				}
 
-				var dest = arch.new_child(@"media/$(frame.get_name())", false);
+				var dest = arch.new_child(@"media/$(frame.get_display_name())", false);
 
 				dest.write(frame_encoded.get_data());
 				dest.close();
