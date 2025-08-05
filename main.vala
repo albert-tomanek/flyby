@@ -53,6 +53,9 @@ namespace FlyBy
 			ff_images.add_mime_type("image/jpeg");
 			ff_images.add_mime_type("image/png");
 
+			ff_videos = new Gtk.FileFilter() { name = "All video formats" };
+			ff_videos.add_pattern("*.mp4");
+
 			ff_flyby = new Gtk.FileFilter() { name = "FlyBy files" };
 			ff_flyby.add_pattern("*.flyby");
 		}	
@@ -176,7 +179,7 @@ namespace FlyBy
 			unowned Frame dragging_frame;
 
 			drag.drag_begin.connect(() => {
-				if (this.frame_r != null && this.method != AnaglyphMethod.NONE)
+				if ((this.frame_r != null && this.method != AnaglyphMethod.NONE) && ((drag.get_current_event_state() & Gdk.ModifierType.ALT_MASK) == 0))
 					dragging_frame = this.frame_r;		// You generally want to be dragging the later frame as when aligning frames you tend to go from the top of the list down.
 				else
 					dragging_frame = this.frame_l;
@@ -308,38 +311,12 @@ namespace FlyBy
 		
 		[GtkChild] Gtk.ComboBoxText ana_mode_box;
 		[GtkChild] Gtk.Adjustment   redboost_adj;
-
-		/* Gst */
-		Gst.Pipeline pipeline;
-		Gst.Bin      export_bin;
-		Gst.Element  export_tee;
-		Gst.Pad?     export_tee_pad = null;
-		Gst.Element  src;
-		Gst.Element  sink;
-		Gst.Element  anablend;
-		Gst.Pad      delay_pad_l;
-		Gst.Pad      delay_pad_r;
 		
 		GLib.ListStore frames = new ListStore(typeof(FlyBy.Frame));
 		Gtk.SingleSelection selection;
 
-		Gst.ClockTime duration;
-		Gst.ClockTime position;
-		//  Gst.ClockTime position {
-		//  	get {
-		//  		Gst.ClockTime pos;
-		//  		this.pipeline.query_position(Gst.Format.PERCENT, out pos);
-		//  		return pos;
-		//  	}
-		//  }
-
-		signal void export_start(string path);
-		signal void export_finished();
-		signal void new_source();
-
 		public MainWindow(Gtk.Application app)
 		{
-			
 			this.application = app;
 			this.load_style();
 		}
@@ -431,16 +408,21 @@ namespace FlyBy
 					if (value.holds(typeof(Gdk.FileList)))
 					{
 						var files = (Gdk.FileList) value.get_boxed();
-						bool at_least_one_matched = false;
+						bool at_least_one_file_matched = false;
 						files.get_files().foreach((file) => {
 							var file_info = file.query_info("standard::*", 0);
 							if (App.ff_images.match(file_info))
 							{					
 								this.frames.append(new FrameFromDisk(file));
-								at_least_one_matched = true;
+								at_least_one_file_matched = true;
+							}
+							else if (App.ff_videos.match(file_info))
+							{					
+								this.import_video.begin(file);
+								at_least_one_file_matched = true;
 							}
 						});
-						return at_least_one_matched;
+						return at_least_one_file_matched;
 					}
 					return false;
 				});
@@ -800,9 +782,6 @@ namespace FlyBy
 					File source = (frame as FrameFromDisk).origin;
 					string etag_out;
 					frame_encoded = yield source.load_bytes_async(null, out etag_out);
-
-					//  var data = Gsf.StructuredBlob.read(Gst.Input.mmap_new(source.get_path()));
-					//  data.write(dest);
 				}
 				else if (frame is FrameInMem)
 				{
@@ -818,6 +797,78 @@ namespace FlyBy
 			}
 
 			arch.close();
+		}
+
+		/* Video import */
+		
+		async void import_video(File file)
+		{
+			var ppl = Gst.parse_launch("uridecodebin name=src ! videoconvert ! video/x-raw,format=RGB ! appsink name=sink emit-signals=true max-buffers=100 drop=false") as Gst.Pipeline;
+
+			ppl.get_by_name("src").set("uri", file.get_uri());
+
+			var appsink = ppl.get_by_name("sink") as Gst.App.Sink;
+			int frame_no = 0;
+
+			appsink.new_sample.connect(() => {
+				var? sample = appsink.pull_sample();
+				if (sample != null)
+				{
+					unowned var caps = sample.get_caps().get_structure(0);
+					int width_px, height_px;
+					caps.get_int("width", out width_px);
+					caps.get_int("height", out height_px);
+
+					var buf = sample.get_buffer();
+					Gst.MapInfo map;
+
+					if (buf.map(out map, Gst.MapFlags.READ))
+					{
+						var frame = new FrameInMem() {
+							filename = @"Frame $(frame_no++)",
+							hidden = false,
+							offset_x = 0,
+							offset_y = 0
+						};
+						frame.cache = new Gdk.Pixbuf.from_bytes(new Bytes(map.data), Gdk.Colorspace.RGB, false, 8, width_px, height_px, width_px * 3);
+						this.frames.append(frame);
+
+						buf.unmap(map);
+					}
+				}
+
+				return Gst.FlowReturn.OK;
+			});
+
+			// Start the pipeline
+			ppl.set_state(Gst.State.PLAYING);
+
+			var finished = false;
+
+			// Wait until EOS or error
+			var bus = ppl.get_bus();
+			bus.add_signal_watch();
+			bus.message.connect((bus, msg) => {
+				switch (msg.type) {
+					case Gst.MessageType.EOS:
+						print("EOS received.\n");
+						ppl.set_state(Gst.State.NULL);
+						finished = true;
+						break;
+					case Gst.MessageType.ERROR:
+						GLib.Error err;
+						string debug;
+						msg.parse_error(out err, out debug);
+						stderr.printf("Error: %s\n", err.message);
+						ppl.set_state(Gst.State.NULL);
+						break;
+					default:
+						break;
+				}
+			});
+
+			while (!finished)  // Don't return from the function until the pipeline has reached EOS.
+				yield;
 		}
 	}
 }
