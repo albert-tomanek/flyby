@@ -300,6 +300,8 @@ namespace FlyBy
 		           FlyBy.Stage      stage = new FlyBy.Stage();
 
 		[GtkChild] Gtk.Box          sidebar;
+		[GtkChild] Gtk.Label        drop_placeholder_label;
+		[GtkChild] Gtk.Stack        sidebar_stack;
 		[GtkChild] Gtk.ColumnView   frame_listview;
 
 		[GtkChild] Gtk.Box          media_bar;
@@ -393,6 +395,13 @@ namespace FlyBy
 						return true;
 					}
 
+					// New instance (Ctrl+n)
+					if (keyval == Gdk.Key.a)
+					{
+						this.ana_mode_box.active = (this.ana_mode_box.active + 1) % ((EnumClass) typeof(AnaglyphMethod).class_ref()).maximum;
+						return true;
+					}
+
 					return false;
 				});
 				(this as Gtk.Widget).add_controller(keypress);
@@ -401,6 +410,10 @@ namespace FlyBy
 			/* Frame list */
 			{
 				this.bind_property("fullscreened", this.sidebar, "visible", BindingFlags.INVERT_BOOLEAN);
+
+				frames.notify["n-items"].connect(() => {
+					sidebar_stack.visible_child = (Gtk.Widget) ((Gtk.StackPage) sidebar_stack.get_pages().get_item(frames.get_n_items() == 0 ? 0 : 1)).child;
+				});
 
 				var dnd_drop = new Gtk.DropTarget(Type.INVALID, Gdk.DragAction.COPY);
 				dnd_drop.set_gtypes({typeof(Gdk.FileList)});
@@ -418,7 +431,11 @@ namespace FlyBy
 							}
 							else if (App.ff_videos.match(file_info))
 							{					
-								this.import_video.begin(file);
+								var dlg = new ImportVideoDlg(file) { transient_for = this };
+								dlg.show();
+								dlg.new_frame.connect(frame => this.frames.append(frame));
+								dlg.new_fps.connect(fps => { this.fps_adj.value = fps; });
+
 								at_least_one_file_matched = true;
 							}
 						});
@@ -440,7 +457,7 @@ namespace FlyBy
 					return false;
 				});
 
-				this.frame_listview.add_controller(dnd_drop);
+				this.sidebar_stack.add_controller(dnd_drop);
 				this.frame_listview.add_controller(keypress);
 
 				this.selection = new Gtk.SingleSelection(null) {
@@ -798,52 +815,168 @@ namespace FlyBy
 
 			arch.close();
 		}
+	}
 
-		/* Video import */
-		
-		async void import_video(File file)
+	[GtkTemplate (ui = "/com/github/albert-tomanek/flyby/import_video.ui")]
+	class ImportVideoDlg : Gtk.Dialog
+	{
+		[GtkChild] Gtk.Picture	preview;
+		[GtkChild] Gtk.ComboBoxText	resize;
+		[GtkChild] Gtk.SpinButton	skip;
+		[GtkChild] Gtk.Label	info_label;
+		[GtkChild] Gtk.ProgressBar	progress;
+		uint	progress_updater_source_id;
+		[GtkChild] Gtk.Box	box;
+
+		private Gdk.Pixbuf first_frame;  // For preview
+
+		public ImportVideoDlg(File file)
 		{
-			var ppl = Gst.parse_launch("uridecodebin name=src ! videoconvert ! video/x-raw,format=RGB ! appsink name=sink emit-signals=true max-buffers=100 drop=false") as Gst.Pipeline;
+			Object(use_header_bar: 1);
+
+			//  title = "Import video — " + file.get_basename();
+
+			var btn_import = this.add_button("_Begin", Gtk.ResponseType.OK);
+			var btn_cancel = this.add_button("_Cancel", Gtk.ResponseType.CANCEL);
+			btn_import.add_css_class("suggested-action");
+
+			resize.active = 0;
+
+			skip.output.connect(() => {
+				int interval_ms = skip.get_value_as_int();
+
+				if (interval_ms == 0)
+					skip.text = "All frames";
+				else if (interval_ms < 1000)
+					skip.text = @"Frame every $(interval_ms)ms";
+				else
+					skip.text = @"Frame every $((float) interval_ms / 1000)s";
+
+				return true;
+			});
+
+			/* Init pipeline */
+			this.create_pipeline(file);		// In pre-rolled state
+			
+			this.first_frame = sample_to_pixbuf(appsink.pull_preroll());
+			preview.paintable = Gdk.Texture.for_pixbuf(
+				this.first_frame.scale_simple(
+					(this.first_frame.width * 300) / this.first_frame.height,
+					300,
+					Gdk.InterpType.BILINEAR
+				)
+			);
+			
+			double fps;
+			int64 vid_total_frames, duration_ns;
+			this.get_vid_info(out fps, out vid_total_frames, out duration_ns);
+
+			/* Interactivity */
+
+			// Label
+			TestDataFunc update_label = () => {
+				int w, h;
+				this.get_resize_size(out w, out h);
+
+				int64 no_frames = (skip.value == 0 ) ?
+					vid_total_frames :
+					(int64) (((double) vid_total_frames / fps) / (skip.value / 1000));
+
+				int64 bytes = w * h * 3 * no_frames;
+
+				info_label.label = @"<i>$no_frames frames @ $(w)x$(h) ≈ <b>$(bytes/1048576) MB memory</b></i>";
+			};
+			update_label();
+
+			resize.changed.connect(() => update_label());
+			skip.notify["value"].connect(() => update_label());
+
+			// 
+
+			var videosz_capf = ppl.get_by_name("videosz-capf");
+			resize.changed.connect(() => {
+				int w, h;
+				this.get_resize_size(out w, out h);
+				
+				videosz_capf.set_property("caps", Gst.Caps.from_string(@"video/x-raw,width=$(w),height=$(h)"));
+			});
+
+			var videofps_capf = ppl.get_by_name("videofps-capf");
+			skip.notify["value"].connect(() => {
+				videofps_capf.set_property("caps", Gst.Caps.from_string(skip.value == 0 ? "video/x-raw" : @"video/x-raw,framerate=$((int) skip.value)/1000"));
+			});
+
+			// Header buttons
+
+			this.response.connect(id => {
+				if (id == Gtk.ResponseType.CANCEL)
+				{
+					ppl.set_state(Gst.State.NULL);
+					this.close();
+				}
+				if (id == Gtk.ResponseType.OK)
+				{
+					this.new_fps(skip.value == 0 ? fps : 1 / (skip.value / 1000));
+
+					ppl.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, 0);	// Flush the preroll frame from pipelne, we want it to have the same size as the others in case of resizing
+					ppl.set_state(Gst.State.PLAYING);
+
+					preview.opacity = 0.5;
+					btn_import.sensitive = false;
+					box.sensitive = false;
+					progress.visible = true;
+
+					this.progress_updater_source_id = Timeout.add(100, () => {
+						int64 pos;
+						if (ppl.query_position(Gst.Format.TIME, out pos)) {
+							progress.fraction = (double) pos / duration_ns;
+						}
+
+						return true; // keep running
+					});
+				}
+			});
+		}
+
+		~ImportVideoDlg()
+		{
+			GLib.Source.remove(this.progress_updater_source_id);
+		}
+
+		Gst.Pipeline ppl;
+		Gst.App.Sink appsink;
+
+		public signal void new_frame(Frame frame);
+		public signal void new_fps(double fps);
+
+		void create_pipeline(File file)
+		{
+			ppl = Gst.parse_launch("uridecodebin name=src ! videoconvert ! video/x-raw,format=RGB ! videoscale ! capsfilter name=videosz-capf caps=video/x-raw ! videorate ! capsfilter name=videofps-capf caps=video/x-raw ! appsink name=sink emit-signals=true sync=false max-buffers=100 drop=false") as Gst.Pipeline;
 
 			ppl.get_by_name("src").set("uri", file.get_uri());
+			appsink = ppl.get_by_name("sink") as Gst.App.Sink;
 
-			var appsink = ppl.get_by_name("sink") as Gst.App.Sink;
 			int frame_no = 0;
 
 			appsink.new_sample.connect(() => {
 				var? sample = appsink.pull_sample();
 				if (sample != null)
 				{
-					unowned var caps = sample.get_caps().get_structure(0);
-					int width_px, height_px;
-					caps.get_int("width", out width_px);
-					caps.get_int("height", out height_px);
-
-					var buf = sample.get_buffer();
-					Gst.MapInfo map;
-
-					if (buf.map(out map, Gst.MapFlags.READ))
-					{
 						var frame = new FrameInMem() {
 							filename = @"Frame $(frame_no++)",
 							hidden = false,
 							offset_x = 0,
 							offset_y = 0
 						};
-						frame.cache = new Gdk.Pixbuf.from_bytes(new Bytes(map.data), Gdk.Colorspace.RGB, false, 8, width_px, height_px, width_px * 3);
-						this.frames.append(frame);
+						frame.cache = sample_to_pixbuf(sample);
+						this.new_frame(frame);
 
-						buf.unmap(map);
-					}
 				}
 
 				return Gst.FlowReturn.OK;
 			});
 
-			// Start the pipeline
-			ppl.set_state(Gst.State.PLAYING);
-
-			var finished = false;
+			ppl.set_state(Gst.State.PAUSED);
 
 			// Wait until EOS or error
 			var bus = ppl.get_bus();
@@ -851,24 +984,99 @@ namespace FlyBy
 			bus.message.connect((bus, msg) => {
 				switch (msg.type) {
 					case Gst.MessageType.EOS:
-						print("EOS received.\n");
 						ppl.set_state(Gst.State.NULL);
-						finished = true;
+						this.close();
 						break;
 					case Gst.MessageType.ERROR:
+					{
 						GLib.Error err;
 						string debug;
 						msg.parse_error(out err, out debug);
-						stderr.printf("Error: %s\n", err.message);
+
 						ppl.set_state(Gst.State.NULL);
+						this.close();
+
+						var dlg = new Gtk.MessageDialog(this.transient_for, Gtk.DialogFlags.MODAL, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "") {
+							text = err.message,
+							secondary_text = debug
+						};
+						dlg.show();
+						dlg.response.connect(() => dlg.close());
+
 						break;
+					}
 					default:
 						break;
 				}
 			});
+		}
 
-			while (!finished)  // Don't return from the function until the pipeline has reached EOS.
-				yield;
+		static Gdk.Pixbuf sample_to_pixbuf(Gst.Sample sample) throws Error
+		{
+			unowned var caps = sample.get_caps().get_structure(0);
+			int width_px, height_px;
+			caps.get_int("width", out width_px);
+			caps.get_int("height", out height_px);
+
+			var buf = sample.get_buffer();
+			Gst.MapInfo map;
+
+			if (buf.map(out map, Gst.MapFlags.READ))
+			{
+				var pixbuf = new Gdk.Pixbuf.from_bytes(new Bytes(map.data), Gdk.Colorspace.RGB, false, 8, width_px, height_px, width_px * 3);
+				buf.unmap(map);
+
+				return pixbuf;
+			}
+
+			throw new Error(0, 0, "Error converting GstSample to GdkPixbuf.");
+		}
+
+		void get_resize_size(out int width, out int height)
+		{
+			int active = resize.active;
+
+			if (active == -1)
+			{
+				/* Try to parse */
+				var text = resize.get_active_text().dup();
+
+				MatchInfo match;
+				if (/^\s*(\d+)\s*x\s*(\d+)\s*$/.match(text, 0, out match))
+				{
+					width  = int.parse(match.fetch(1));
+					height = int.parse(match.fetch(2));
+
+					return;
+				}
+				else
+					active = 0;
+			}
+
+			switch (active)
+			{
+				case 0: height = first_frame.height; width = first_frame.width; break;
+				case 1: height = 360; width = (first_frame.width * height)/first_frame.height; break;
+				case 2: height = 720; width = (first_frame.width * height)/first_frame.height; break;
+				case 3: height = 1080; width = (first_frame.width * height)/first_frame.height; break;
+			}
+		}
+
+		void get_vid_info(out double fps, out int64 frame_count, out int64 duration_ns)	// ppl must be <=PAUSED to work
+		{
+			if (ppl.query_duration(Gst.Format.TIME, out duration_ns)) {
+				// Get framerate from caps
+				var sink_pad = ppl.get_by_name("sink").get_static_pad("sink");
+				var caps = sink_pad.get_current_caps();
+				unowned var s = caps.get_structure(0);
+
+				int num, denom;
+				if (s.get_fraction("framerate", out num, out denom)) {
+					fps = (double) num / denom;
+					double duration_sec = duration_ns / 1000000000.0;
+					frame_count = (int64) (fps * duration_sec);
+				}
+			}
 		}
 	}
 }

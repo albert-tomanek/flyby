@@ -1,13 +1,90 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<!-- Created with Cambalache 0.90.4 -->
+<!-- Created with Cambalache 0.96.1 -->
 <interface>
   <!-- interface-name example -->
-  <requires lib="gtk" version="4.6"/>
   <requires lib="gio" version="2.0"/>
+  <requires lib="gtk" version="4.6"/>
   <template class="FlyByMainWindow" parent="GtkApplicationWindow">
     <property name="name">FlyBy</property>
     <property name="title">FlyBy</property>
     <property name="titlebar">titlebar</property>
+    <child type="titlebar">
+      <object class="GtkHeaderBar" id="titlebar">
+        <child type="end">
+          <object class="GtkMenuButton">
+            <property name="popover">goggles_popover</property>
+            <property name="tooltip-markup">Properties of the anaglyphic glasses used</property>
+            <child>
+              <object class="GtkImage">
+                <property name="resource">/com/github/albert-tomanek/flyby/glasses2.svg</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkPopover"/>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="css-classes">linked</property>
+            <property name="halign">start</property>
+            <child>
+              <object class="GtkButton">
+                <property name="action-name">win.open</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="spacing">2</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">document-open</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">O_pen</property>
+                        <property name="use-underline">True</property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <style>
+                  <class name="text-button"/>
+                  <class name="image-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton">
+                <property name="action-name">win.save-as</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="spacing">2</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">document-save-as</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">S_ave</property>
+                        <property name="use-underline">True</property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <style>
+                  <class name="text-button"/>
+                  <class name="image-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkMenuButton"/>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
     <child>
       <object class="GtkPaned">
         <child>
@@ -16,10 +93,28 @@
             <property name="vexpand">True</property>
             <property name="width-request">200</property>
             <child>
-              <object class="GtkScrolledWindow">
+              <object class="GtkStack" id="sidebar_stack">
                 <child>
-                  <object class="GtkColumnView" id="frame_listview">
+                  <object class="GtkLabel" id="drop_placeholder_label">
+                    <property name="css-classes">caption-heading</property>
+                    <property name="hexpand">True</property>
+                    <property name="justify">center</property>
+                    <property name="label">Drop image or video files to import as frames.</property>
+                    <property name="margin-bottom">24</property>
+                    <property name="margin-end">24</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-top">24</property>
                     <property name="vexpand">True</property>
+                    <property name="wrap">True</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <child>
+                      <object class="GtkColumnView" id="frame_listview">
+                        <property name="vexpand">True</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>
@@ -32,12 +127,6 @@
             <child>
               <object class="GtkOverlay">
                 <property name="vexpand">True</property>
-                <child>
-                  <object class="GtkBox" id="stage_box">
-                    <property name="css-classes">stage</property>
-                    <property name="height-request">300</property>
-                  </object>
-                </child>
                 <child type="overlay">
                   <object class="GtkBox" id="media_bar">
                     <property name="css-classes">osd</property>
@@ -45,6 +134,7 @@
                     <property name="margin-bottom">10</property>
                     <property name="margin-end">10</property>
                     <property name="margin-start">10</property>
+                    <property name="name">position-bar</property>
                     <property name="spacing">10</property>
                     <property name="valign">end</property>
                     <child>
@@ -70,43 +160,12 @@
                     <style/>
                   </object>
                 </child>
-              </object>
-            </child>
-          </object>
-        </child>
-      </object>
-    </child>
-    <child type="titlebar">
-      <object class="GtkHeaderBar" id="titlebar">
-        <child type="end">
-          <object class="GtkMenuButton">
-            <property name="popover">goggles_popover</property>
-            <property name="tooltip-markup">Properties of the anaglyphic glasses used</property>
-            <child>
-              <object class="GtkImage">
-                <property name="resource">/com/github/albert-tomanek/flyby/glasses2.svg</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkPopover"/>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox">
-            <property name="css-classes">linked</property>
-            <property name="halign">start</property>
-            <child>
-              <object class="GtkMenuButton">
-                <property name="label">Save</property>
-                <property name="menu-model">save_menu</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkMenuButton">
-                <property name="icon-name">document-open</property>
-                <property name="label">Open</property>
-                <property name="menu-model">open_menu</property>
+                <child>
+                  <object class="GtkBox" id="stage_box">
+                    <property name="css-classes">stage</property>
+                    <property name="height-request">300</property>
+                  </object>
+                </child>
               </object>
             </child>
           </object>
@@ -191,29 +250,7 @@
   <object class="GtkAdjustment" id="fps_adj">
     <property name="lower">1.0</property>
     <property name="step-increment">1.0</property>
-    <property name="upper">20.0</property>
+    <property name="upper">120.0</property>
     <property name="value">12.0</property>
   </object>
-  <menu id="save_menu">
-    <item>
-      <attribute name="action">win.save-as</attribute>
-      <attribute name="label">Save _As...</attribute>
-    </item>
-  </menu>
-  <menu id="open_menu">
-    <item>
-      <attribute name="action">win.open</attribute>
-      <attribute name="icon">document-open</attribute>
-      <attribute name="label">Open</attribute>
-    </item>
-    <item>
-      <attribute name="label">Stereo Pair</attribute>
-    </item>
-    <item>
-      <attribute name="label">Burst</attribute>
-    </item>
-    <item>
-      <attribute name="label">Video</attribute>
-    </item>
-  </menu>
 </interface>

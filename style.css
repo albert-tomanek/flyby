@@ -11,3 +11,7 @@
 .hidden {
 	color: lightgray;
 }
+
+#position-bar {
+	padding: 4px;
+}
