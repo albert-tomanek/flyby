@@ -131,10 +131,7 @@ namespace FlyBy
 					old_frame_l.disconnect(frame_l_notify_binding);
 
 				// Loading is async so we actually have to wait until the property appears
-				frame_l_notify_binding = frame_l.notify.connect(() => {
-					this.refresh_pixbuf();
-					this.queue_draw();
-				});
+				frame_l_notify_binding = frame_l.notify.connect(() => { this.refresh_stage(); });
 				// We just got a new frame_l and that means also a new frame_l.cache. Trigger a redraw.
 				frame_l.notify_property("cache");
 				
@@ -146,26 +143,17 @@ namespace FlyBy
 
 				if (frame_r != null)
 				{
-					frame_r_notify_binding = frame_r.notify.connect(() => {
-						this.refresh_pixbuf();
-						this.queue_draw();
-					});
+					frame_r_notify_binding = frame_r.notify.connect(() => { this.refresh_stage(); });
 					frame_r.notify_property("cache");
 				}
 
 				old_frame_r = frame_r;
 			});
-			this.notify["method"].connect(() => {
-				this.refresh_pixbuf();
-				this.queue_draw();
-			});
-			this.notify["red-coef"].connect(() => {
-				this.refresh_pixbuf();
-				this.queue_draw();
-			});
+			this.notify["method"].connect(() => { this.refresh_stage(); });
+			this.notify["red-coef"].connect(() => { this.refresh_stage(); });
 
 			this.set_draw_func((_, cr, w, h) => { this.draw(cr); });
-			this.resize.connect(() => { this.refresh_pixbuf(); });
+			this.resize.connect(() => { this.refresh_stage(); });
 
 			// UI stuff
 
@@ -188,7 +176,10 @@ namespace FlyBy
 				old_offset_y = dragging_frame.offset_y;
 			});
 			drag.drag_update.connect((dx, dy) => {
-				var letterbox = this.get_letterbox();
+				var letterbox = this.get_letterbox(Gdk.Rectangle() {
+					width  = this.get_width(),
+					height = this.get_height()
+				});
 
 				dragging_frame.offset_x = old_offset_x + (dx / letterbox.width);
 				dragging_frame.offset_y = old_offset_y + (dy / letterbox.height);
@@ -215,53 +206,65 @@ namespace FlyBy
 			cr.paint();
 		}
 
-		private Gdk.Rectangle get_letterbox()
+		private Gdk.Rectangle get_letterbox(Gdk.Rectangle stage_sz)  // given the frame aspect ratio and the widget allocation
 		requires (this.frame_l.cache != null)
 		{
 			// Work out the size and position of the scaled image
 			double src_aspect  = (double) this.frame_l.cache.width  / (double) this.frame_l.cache.height;
-			double dest_aspect = (double) this.get_width() / (double) this.get_height();
+			double dest_aspect = (double) stage_sz.width / (double) stage_sz.height;
 
 			var letterbox = Gdk.Rectangle();
 
 			if (src_aspect > dest_aspect) {
-				letterbox.width  = this.get_width();
+				letterbox.width  = stage_sz.width;
 				letterbox.height = (int) (letterbox.width / src_aspect);
 				letterbox.x = 0;
-				letterbox.y = (this.get_height() - letterbox.height) / 2;
+				letterbox.y = (stage_sz.height - letterbox.height) / 2;
 			} else {
-				letterbox.height = this.get_height();
+				letterbox.height = stage_sz.height;
 				letterbox.width  = (int) (letterbox.height * src_aspect);
-				letterbox.x = (this.get_width() - letterbox.width) / 2;
+				letterbox.x = (stage_sz.width - letterbox.width) / 2;
 				letterbox.y = 0;
 			}
 
 			return letterbox;
 		}
 
-		private void refresh_pixbuf()
+		private void refresh_stage()
+		{
+			this.pixbuf = this.render_composite(Gdk.Rectangle() {
+				width  = this.get_width(),
+				height = this.get_height()
+			});
+
+			this.queue_draw();
+		}
+
+		internal Gdk.Pixbuf render_composite(Gdk.Rectangle stage_sz)
 		{
 			if (this.frame_l != null)
 			{
-				var pixbuf_l = this.render_frame(this.frame_l);
+				var pixbuf_l = this.render_frame(this.frame_l, stage_sz);
 				
 				if (this.method == AnaglyphMethod.NONE || this.frame_r == null)
-					this.pixbuf = pixbuf_l;
+					return pixbuf_l;
 				else
 				{
-					var pixbuf_r = this.render_frame(this.frame_r);
-					this.pixbuf  = make_anaglyph(pixbuf_l, pixbuf_r, this.method, (float) this.red_coef);
+					var pixbuf_r = this.render_frame(this.frame_r, stage_sz);
+					return make_anaglyph(pixbuf_l, pixbuf_r, this.method, (float) this.red_coef);
 				}
 			}
+			else
+				return new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
 		}
 
-		private Gdk.Pixbuf render_frame(Frame frame)
+		internal Gdk.Pixbuf render_frame(Frame frame, Gdk.Rectangle stage_sz)	/// Render the composition layer with the given frame
 		{
-			var render = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, this.get_width(), this.get_height());
+			var render = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
 			
 			if (frame.cache != null)
 			{
-				var letterbox = this.get_letterbox();
+				var letterbox = this.get_letterbox(stage_sz);
 				var scaled = frame.cache.scale_simple(letterbox.width, letterbox.height, Gdk.InterpType.NEAREST);
 
 				// Copy the appropriate part of the image with regards to frame offset
@@ -272,10 +275,8 @@ namespace FlyBy
 					height = letterbox.height,
 				};
 
-				Gtk.Allocation bounds;
 				Gdk.Rectangle position_clipped;
-				this.get_allocation(out bounds);
-				bounds.intersect(position, out position_clipped);
+				stage_sz.intersect(position, out position_clipped);
 
 				scaled.copy_area(
 					(position.x < position_clipped.x) ? (position_clipped.x - position.x) : 0,	// src_x
@@ -334,6 +335,22 @@ namespace FlyBy
 			init_ui();
 
 			this.add_action_entries({
+				{"open", () => {
+					var d = new Gtk.FileChooserDialog("Open", this, Gtk.FileChooserAction.OPEN, "Cancel", Gtk.ResponseType.CANCEL, "_Open", Gtk.ResponseType.OK) {
+						select_multiple = false,
+						filter = App.ff_flyby,
+					};
+					d.show();
+		
+					d.response.connect((r) => {
+						if (r == Gtk.ResponseType.OK)
+							this.open.begin(d.get_file(), (_, ctx) => {
+								this.open.end(ctx);
+							});
+		
+						d.close();
+					});
+				}, null, null, null},
 				{"save-as", () => {
 					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
 						select_multiple = false,
@@ -352,21 +369,22 @@ namespace FlyBy
 						d.close();
 					});		
 				}, null, null, null},
-				{"open", () => {
-					var d = new Gtk.FileChooserDialog("Open", this, Gtk.FileChooserAction.OPEN, "Cancel", Gtk.ResponseType.CANCEL, "_Open", Gtk.ResponseType.OK) {
-						select_multiple = false,
-						filter = App.ff_flyby,
+				{"export-composite", () => {  //"export-stereo" "export-gif"
+					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
+						select_multiple = false
 					};
+					d.set_current_name(".jpeg");
 					d.show();
 		
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
-							this.open.begin(d.get_file(), (_, ctx) => {
-								this.open.end(ctx);
+							this.export_composite(d.get_file(), (_, ctx) => {
+								this.export_composite.end(ctx);
+								d.close();
 							});
-		
+
 						d.close();
-					});
+					});		
 				}, null, null, null}
 			}, this);
 
@@ -815,6 +833,18 @@ namespace FlyBy
 
 			arch.close();
 		}
+
+		/* Import/Export */
+
+		async void export_composite(File file)
+		{
+			Gdk.Pixbuf composite = this.stage.render_composite(Gdk.Rectangle() {
+				width  = this.stage.frame_l.cache.width,
+				height = this.stage.frame_l.cache.height,
+			});
+
+			yield composite.save_to_streamv_async(yield file.create_async(FileCreateFlags.NONE), "jpeg", {"quality"}, {"90"});
+		}
 	}
 
 	[GtkTemplate (ui = "/com/github/albert-tomanek/flyby/import_video.ui")]
@@ -903,7 +933,7 @@ namespace FlyBy
 
 			var videofps_capf = ppl.get_by_name("videofps-capf");
 			skip.notify["value"].connect(() => {
-				videofps_capf.set_property("caps", Gst.Caps.from_string(skip.value == 0 ? "video/x-raw" : @"video/x-raw,framerate=$((int) skip.value)/1000"));
+				videofps_capf.set_property("caps", Gst.Caps.from_string(skip.value == 0 ? "video/x-raw" : @"video/x-raw,framerate=1000/$((int) skip.value)"));
 			});
 
 			// Header buttons
