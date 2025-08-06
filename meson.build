@@ -13,6 +13,7 @@ executable('com.github.alberttomanek.flyby',
 		'main.vala',
 		'misc.vala',
 		'anaglyph.vala',
+		'jps_export.vala',
 	],
 	dependencies: [
 		dependency('glib-2.0'),

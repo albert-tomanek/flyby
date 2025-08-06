@@ -369,7 +369,7 @@ namespace FlyBy
 						d.close();
 					});		
 				}, null, null, null},
-				{"export-composite", () => {  //"export-stereo" "export-gif"
+				{"export-composite", () => {  // "export-gif"
 					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
 						select_multiple = false
 					};
@@ -391,6 +391,34 @@ namespace FlyBy
 						if (r == Gtk.ResponseType.OK)
 							this.export_composite(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
 								this.export_composite.end(ctx);
+								d.close();
+							});
+
+						d.close();
+					});		
+				}, null, null, null},
+				{"export-stereo", () => {
+					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
+						select_multiple = false
+					};
+					d.set_current_name(".jps");
+
+					var ab = insert_footer(d);
+					ab.pack_start(new Gtk.Label("Quality"));
+					var qual_scale = new Gtk.Scale.with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1) {
+						digits = 0,
+						draw_value = true,
+						value_pos = Gtk.PositionType.RIGHT,
+						width_request = 150
+					};
+					qual_scale.adjustment.value = 90;
+					ab.pack_start(qual_scale);
+					d.show();
+		
+					d.response.connect((r) => {
+						if (r == Gtk.ResponseType.OK)
+							this.export_stereo(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
+								this.export_stereo.end(ctx);
 								d.close();
 							});
 
@@ -855,6 +883,40 @@ namespace FlyBy
 			});
 
 			yield composite.save_to_streamv_async(yield file.create_async(FileCreateFlags.NONE), "jpeg", {"quality"}, {qual.to_string()});
+		}
+
+		async void export_stereo(File file, int qual)
+		{
+			if (stage.frame_l == null || stage.frame_r == null)
+				return;
+
+			var render_sz = Gdk.Rectangle() {
+				width  = this.stage.frame_l.cache.width,
+				height = this.stage.frame_l.cache.height,
+			};
+
+			Gdk.Pixbuf render_l = this.stage.render_frame(this.stage.frame_l, render_sz);
+			Gdk.Pixbuf render_r = this.stage.render_frame(this.stage.frame_r, render_sz);
+
+			var side_by_side = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, render_sz.width, render_l.height + render_r.height);
+			render_l.copy_area(0, 0, render_l.width, render_l.height, side_by_side, 0, 0);
+			render_r.copy_area(0, 0, render_r.width, render_r.height, side_by_side, 0, render_l.height);
+
+			var out_stream = new MemoryOutputStream.resizable();
+			yield side_by_side.save_to_streamv_async(out_stream, "jpeg", {"quality"}, {qual.to_string()});
+			out_stream.close();
+
+			owned uint8[] jpg_bytes_arr = out_stream.steal_data();
+			jpg_bytes_arr.length = (int) out_stream.get_data_size ();
+
+			var jpg_bytes = new ByteArray.take(jpg_bytes_arr);
+			JPS.implant_jps_header(
+				jpg_bytes,
+				JPS.Info.MTYPE_STEREOSCOPIC_IMAGE |
+				JPS.Info.LAYOUT_OVERUNDER |
+				JPS.Info.LEFT_FIELD_FIRST
+			);
+			yield (yield file.create_async(FileCreateFlags.NONE)).write_bytes_async(ByteArray.free_to_bytes(jpg_bytes));
 		}
 	}
 
