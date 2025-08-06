@@ -7,7 +7,7 @@ resources = gnome.compile_resources(
 	export: true,
 )
 
-executable('main',
+executable('com.github.alberttomanek.flyby',
 	resources,
 	sources: [
 		'main.vala',
@@ -25,6 +25,7 @@ executable('main',
 		dependency('libgsf-1'),
 		dependency('json-glib-1.0'),
 	],
+	install: true
 )
 
 install_data('com.github.albert-tomanek.flyby.gschema.xml', install_dir : get_option('datadir') / 'glib-2.0' / 'schemas')

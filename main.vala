@@ -10,7 +10,7 @@ namespace FlyBy
 	public class App : Gtk.Application {
 		public App () {
 			Object(
-				application_id: "com.github.albert-tomanek.flyby",
+				application_id: "com.github.alberttomanek.flyby",
 				flags: ApplicationFlags.HANDLES_OPEN
 			);
 		}
@@ -374,11 +374,22 @@ namespace FlyBy
 						select_multiple = false
 					};
 					d.set_current_name(".jpeg");
+
+					var ab = insert_footer(d);
+					ab.pack_start(new Gtk.Label("Quality"));
+					var qual_scale = new Gtk.Scale.with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1) {
+						digits = 0,
+						draw_value = true,
+						value_pos = Gtk.PositionType.RIGHT,
+						width_request = 150
+					};
+					qual_scale.adjustment.value = 90;
+					ab.pack_start(qual_scale);
 					d.show();
 		
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
-							this.export_composite(d.get_file(), (_, ctx) => {
+							this.export_composite(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
 								this.export_composite.end(ctx);
 								d.close();
 							});
@@ -836,14 +847,14 @@ namespace FlyBy
 
 		/* Import/Export */
 
-		async void export_composite(File file)
+		async void export_composite(File file, int qual)
 		{
 			Gdk.Pixbuf composite = this.stage.render_composite(Gdk.Rectangle() {
 				width  = this.stage.frame_l.cache.width,
 				height = this.stage.frame_l.cache.height,
 			});
 
-			yield composite.save_to_streamv_async(yield file.create_async(FileCreateFlags.NONE), "jpeg", {"quality"}, {"90"});
+			yield composite.save_to_streamv_async(yield file.create_async(FileCreateFlags.NONE), "jpeg", {"quality"}, {qual.to_string()});
 		}
 	}
 
