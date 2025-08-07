@@ -16,7 +16,7 @@
             <property name="tooltip-markup">Properties of the anaglyphic glasses used</property>
             <child>
               <object class="GtkImage">
-                <property name="resource">/com/github/albert-tomanek/flyby/glasses1.svg</property>
+                <property name="resource">/org/neocities/albertt/flyby/glasses1.svg</property>
               </object>
             </child>
           </object>

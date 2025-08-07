@@ -1,8 +1,8 @@
-id: com.github.alberttomanek.flyby
+id: org.neocities.albertt.flyby
 runtime: org.gnome.Platform
 runtime-version: '47'
 sdk: org.gnome.Sdk
-command: com.github.alberttomanek.flyby
+command: org.neocities.albertt.flyby
 finish-args:
   - --socket=x11
   - --socket=wayland

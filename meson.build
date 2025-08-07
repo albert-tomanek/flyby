@@ -7,7 +7,7 @@ resources = gnome.compile_resources(
 	export: true,
 )
 
-executable('com.github.alberttomanek.flyby',
+executable('org.neocities.albertt.flyby',
 	resources,
 	sources: [
 		'main.vala',
@@ -29,7 +29,7 @@ executable('com.github.alberttomanek.flyby',
 	install: true
 )
 
-install_data('com.github.albert-tomanek.flyby.gschema.xml', install_dir : get_option('datadir') / 'glib-2.0' / 'schemas')
+install_data('org.neocities.albertt.flyby.gschema.xml', install_dir : get_option('datadir') / 'glib-2.0' / 'schemas')
 gnome.post_install(
 	glib_compile_schemas: true
 )

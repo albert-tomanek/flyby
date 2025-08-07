@@ -10,7 +10,7 @@ namespace FlyBy
 	public class App : Gtk.Application {
 		public App () {
 			Object(
-				application_id: "com.github.alberttomanek.flyby",
+				application_id: "org.neocities.albertt.flyby",
 				flags: ApplicationFlags.HANDLES_OPEN
 			);
 		}
@@ -293,7 +293,7 @@ namespace FlyBy
 		}
 	}
 
-	[GtkTemplate (ui = "/com/github/albert-tomanek/flyby/main.ui")]
+	[GtkTemplate (ui = "/org/neocities/albertt/flyby/main.ui")]
 	class MainWindow : Gtk.ApplicationWindow
 	{
 		/* UI */
@@ -327,7 +327,7 @@ namespace FlyBy
 		private void load_style()
 		{
 			var css_provider = new Gtk.CssProvider();
-			css_provider.load_from_resource("/com/github/albert-tomanek/flyby/style.css");
+			css_provider.load_from_resource("/org/neocities/albertt/flyby/style.css");
 			Gtk.StyleContext.add_provider_for_display (Gdk.Display.get_default (), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
 		}
 		
@@ -428,7 +428,7 @@ namespace FlyBy
 			}, this);
 
 			//
-			var settings = new Settings ("com.github.albert-tomanek.flyby");
+			var settings = new Settings ("org.neocities.albertt.flyby");
 			settings.bind("red-boost", this.stage, "red-coef", SettingsBindFlags.DEFAULT);
 		}
 
@@ -704,7 +704,7 @@ namespace FlyBy
 			
 			// FIXME: How to do an actual context menu in Gtk4 that allows callbacks to code?
 			//  var popover = new Gtk.PopoverMenu.from_model(
-			//  	(new Gtk.Builder.from_resource("/com/github/albert-tomanek/flyby/menu_frame_listview.ui")).get_object("menu") as GLib.MenuModel
+			//  	(new Gtk.Builder.from_resource("/org/neocities/albertt/flyby/menu_frame_listview.ui")).get_object("menu") as GLib.MenuModel
 			//  ) {
 			//  	has_arrow = false,
 			//  	halign = Gtk.Align.START,
@@ -920,7 +920,7 @@ namespace FlyBy
 		}
 	}
 
-	[GtkTemplate (ui = "/com/github/albert-tomanek/flyby/import_video.ui")]
+	[GtkTemplate (ui = "/org/neocities/albertt/flyby/import_video.ui")]
 	class ImportVideoDlg : Gtk.Dialog
 	{
 		[GtkChild] Gtk.Picture	preview;

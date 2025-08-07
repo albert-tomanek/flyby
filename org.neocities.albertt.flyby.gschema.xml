@@ -1,5 +1,5 @@
 <schemalist>
-  <schema id="com.github.albert-tomanek.flyby" path="/com/github/albert-tomanek/flyby/" gettext-domain="flyby">
+  <schema id="org.neocities.albertt.flyby" path="/org/neocities/albertt/flyby/" gettext-domain="flyby">
 
     <key name="red-boost" type="d">
       <default>1.0</default>
