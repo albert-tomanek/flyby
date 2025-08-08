@@ -71,6 +71,11 @@ namespace FlyBy
 
 		public abstract string get_display_name();
 		//  public abstract string get_save_name();		// without extension
+
+		public Gdk.Rectangle get_size()
+		{
+			return Gdk.Rectangle() { width = this.cache.width, height = this.cache.height };
+		}
 	}
 
 	class FrameFromDisk : Frame
@@ -176,7 +181,7 @@ namespace FlyBy
 				old_offset_y = dragging_frame.offset_y;
 			});
 			drag.drag_update.connect((dx, dy) => {
-				var letterbox = this.get_letterbox(Gdk.Rectangle() {
+				var letterbox = this.get_letterbox(dragging_frame.get_size(), Gdk.Rectangle() {
 					width  = this.get_width(),
 					height = this.get_height()
 				});
@@ -206,11 +211,10 @@ namespace FlyBy
 			cr.paint();
 		}
 
-		private Gdk.Rectangle get_letterbox(Gdk.Rectangle stage_sz)  // given the frame aspect ratio and the widget allocation
-		requires (this.frame_l.cache != null)
+		private static Gdk.Rectangle get_letterbox(Gdk.Rectangle frame_sz, Gdk.Rectangle stage_sz)  // given the frame aspect ratio and the widget allocation
 		{
 			// Work out the size and position of the scaled image
-			double src_aspect  = (double) this.frame_l.cache.width  / (double) this.frame_l.cache.height;
+			double src_aspect  = (double) frame_sz.width / (double) frame_sz.height;
 			double dest_aspect = (double) stage_sz.width / (double) stage_sz.height;
 
 			var letterbox = Gdk.Rectangle();
@@ -258,13 +262,13 @@ namespace FlyBy
 				return new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
 		}
 
-		internal Gdk.Pixbuf render_frame(Frame frame, Gdk.Rectangle stage_sz)	/// Render the composition layer with the given frame
+		internal static Gdk.Pixbuf render_frame(Frame frame, Gdk.Rectangle stage_sz)	/// Render the composition layer with the given frame
 		{
 			var render = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
 			
 			if (frame.cache != null)
 			{
-				var letterbox = this.get_letterbox(stage_sz);
+				var letterbox = Stage.get_letterbox(frame.get_size(), stage_sz);
 				var scaled = frame.cache.scale_simple(letterbox.width, letterbox.height, Gdk.InterpType.NEAREST);
 
 				// Copy the appropriate part of the image with regards to frame offset
@@ -311,6 +315,7 @@ namespace FlyBy
 		[GtkChild] Gtk.Scale        position_scale;
 		[GtkChild] Gtk.Adjustment   position_adj;
 		[GtkChild] Gtk.Adjustment   fps_adj;
+		internal double fps { get; set; default = 12; }
 		
 		[GtkChild] Gtk.ComboBoxText ana_mode_box;
 		[GtkChild] Gtk.Adjustment   redboost_adj;
@@ -332,6 +337,8 @@ namespace FlyBy
 		}
 		
 		construct {
+			bind_property("fps", fps_adj, "value", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
+
 			init_ui();
 
 			this.add_action_entries({
@@ -369,7 +376,7 @@ namespace FlyBy
 						d.close();
 					});		
 				}, null, null, null},
-				{"export-composite", () => {  // "export-gif"
+				{"export-composite", () => {
 					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
 						select_multiple = false
 					};
@@ -424,6 +431,12 @@ namespace FlyBy
 
 						d.close();
 					});		
+				}, null, null, null},
+				{"export-gif", () => {
+					var d = new ExportGifDlg(this.frames, this.fps) {
+						transient_for = this
+					};
+					d.show();
 				}, null, null, null}
 			}, this);
 
@@ -491,7 +504,7 @@ namespace FlyBy
 								var dlg = new ImportVideoDlg(file) { transient_for = this };
 								dlg.show();
 								dlg.new_frame.connect(frame => this.frames.append(frame));
-								dlg.new_fps.connect(fps => { this.fps_adj.value = fps; });
+								dlg.new_fps.connect(new_fps => { this.fps = new_fps; });
 
 								at_least_one_file_matched = true;
 							}
@@ -581,7 +594,7 @@ namespace FlyBy
 					this.play_button.icon_name = "media-playback-stop-symbolic";
 					this.play_state = 1;
 					Timeout.add(
-						(uint) (1000 / this.fps_adj.value),
+						(uint) (1000 / this.fps),
 						() => { this.advance_frame_recursive(); return false; }
 					);
 				}
@@ -644,7 +657,7 @@ namespace FlyBy
 
 			if (this.play_state != 0)	// If it is, they've asked us to stop.
 				Timeout.add(
-					(this.selection.selected_item as Frame).hidden ? 0 : (uint) (1000 / this.fps_adj.value),
+					(this.selection.selected_item as Frame).hidden ? 0 : (uint) (1000 / this.fps),
 					() => { this.advance_frame_recursive(); return false; }
 				);	// We need to renew this every time because they might have changed the fps setting while we were playing.
 		}
@@ -751,7 +764,7 @@ namespace FlyBy
 			var cur = new Json.Reader(info);
 
 			if (cur.read_member("fps"))
-				this.fps_adj.value = cur.get_double_value();
+				this.fps = cur.get_double_value();
 			cur.end_member();
 			
 			/* Load frames */
@@ -805,7 +818,7 @@ namespace FlyBy
 				builder.begin_object ();
 
 				builder.set_member_name ("fps");
-				builder.add_double_value(this.fps_adj.value);
+				builder.add_double_value(this.fps);
 
 				builder.set_member_name ("frames");
 				builder.begin_array ();
@@ -1180,6 +1193,127 @@ namespace FlyBy
 					frame_count = (int64) (fps * duration_sec);
 				}
 			}
+		}
+	}
+
+	class ExportGifDlg : Gtk.Dialog
+	{
+		Gtk.FileChooserWidget	fc;
+
+		GLib.ListModel frames;
+
+		public ExportGifDlg(GLib.ListModel frames, double fps)
+		{
+			Object(use_header_bar: 1, modal: true, title: "Export Wiggle GIF");
+			this.frames = frames;
+
+			this.get_content_area().append(this.fc = new Gtk.FileChooserWidget(Gtk.FileChooserAction.SAVE) {
+				select_multiple = false,
+				vexpand = true
+			});
+			this.fc.set_current_name(".gif");
+
+			var btn_export = this.add_button("_Export", Gtk.ResponseType.OK);
+			var btn_cancel = this.add_button("_Cancel", Gtk.ResponseType.CANCEL);
+			btn_export.add_css_class("suggested-action");
+
+			var ab = insert_footer(this);
+			ab.pack_start(new Gtk.Label("Size"));
+
+			/* Init pipeline */
+			this.create_pipeline(fps);		// In pre-rolled state
+			
+			//  var videosz_capf = ppl.get_by_name("videosz-capf");
+			//  resize.changed.connect(() => {
+			//  	int w, h;
+			//  	this.get_resize_size(out w, out h);
+				
+			//  	videosz_capf.set_property("caps", Gst.Caps.from_string(@"video/x-raw,width=$(w),height=$(h)"));
+			//  });
+
+			// Header buttons
+			this.response.connect((r) => {
+				if (r == Gtk.ResponseType.OK)
+				{
+					this.get_content_area().sensitive = false;
+					btn_export.sensitive = false;
+
+					filesink.set("location", this.fc.get_file().get_path());
+					ppl.set_state(Gst.State.PLAYING);
+				}
+				else
+				{
+					ppl.set_state(Gst.State.NULL);
+					this.close();
+				}
+			});		
+		}
+
+		Gst.Pipeline ppl;
+		Gst.App.Src appsrc;
+		Gst.Element filesink;
+
+		void create_pipeline(double fps)
+		{
+			var render_size = (this.frames.get_object(0) as Frame).get_size();
+
+			ppl = Gst.parse_launch(
+				"appsrc block=false name=src " +
+				@"caps=video/x-raw,width=$(render_size.width),height=$(render_size.height),format=RGB,framerate=$((int) fps)/1" +
+				" ! gifenc repeat=-1 ! filesink name=sink"
+			) as Gst.Pipeline;
+
+			filesink = ppl.get_by_name("sink");
+			appsrc   = ppl.get_by_name("src") as Gst.App.Src;
+
+			appsrc.need_data.connect(() => {
+				uint n_frames = this.frames.get_n_items();
+
+				for (uint i = 0; i < n_frames * 2; i++)
+				{
+					var buffer = new Gst.Buffer.wrapped_bytes(
+						Stage.render_frame(
+							this.frames.get_object(i < n_frames ? i : 2*n_frames - i - 1) as Frame,
+							render_size
+						).pixel_bytes
+					);
+					buffer.pts = Gst.MSECOND * (Gst.ClockTime) (1000 / fps) * i;
+
+					appsrc.push_buffer(buffer);
+				}
+
+				appsrc.end_of_stream();
+			});
+
+			// Wait until EOS or error
+			var bus = ppl.get_bus();
+			bus.add_signal_watch();
+			bus.message.connect((bus, msg) => {
+				switch (msg.type) {
+					case Gst.MessageType.EOS:
+						this.close();
+						break;
+					case Gst.MessageType.ERROR:
+					{
+						GLib.Error err;
+						string debug;
+						msg.parse_error(out err, out debug);
+
+						this.close();
+
+						var dlg = new Gtk.MessageDialog(this.transient_for, Gtk.DialogFlags.MODAL, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "") {
+							text = err.message,
+							secondary_text = debug
+						};
+						dlg.show();
+						dlg.response.connect(() => dlg.close());
+
+						break;
+					}
+					default:
+						break;
+				}
+			});
 		}
 	}
 }

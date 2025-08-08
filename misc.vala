@@ -42,7 +42,7 @@ class GenericArrayWrapper<T> : GLib.ListModel, Object
 	}
 }
 
-private Gtk.ActionBar insert_footer(Gtk.FileChooserDialog diag)
+private Gtk.ActionBar insert_footer(Gtk.Dialog diag)
 {
 	var box = diag.get_content_area();
 	var ab = new Gtk.ActionBar();
