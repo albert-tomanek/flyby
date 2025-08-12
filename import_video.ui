@@ -39,17 +39,7 @@
                 <property name="hexpand-set">True</property>
                 <property name="spacing">8</property>
                 <child>
-                  <object class="GtkComboBoxText" id="resize">
-                    <property name="active">0</property>
-                    <property name="active-id">0</property>
-                    <property name="has-entry">True</property>
-                    <items>
-                      <item id="0">Don't resize</item>
-                      <item id="1">360p</item>
-                      <item id="2">720p</item>
-                      <item id="3">1080p</item>
-                    </items>
-                  </object>
+                  <object class="GtkBox" id="resize_hole"/>
                 </child>
                 <child>
                   <object class="GtkSpinButton" id="skip">

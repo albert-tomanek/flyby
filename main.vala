@@ -1,3 +1,5 @@
+// source code uses elastic tabs
+
 // https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs/-/tree/main/video/gtk4
 // https://packages.debian.org/sid/gstreamer1.0-gtk4
 
@@ -5,6 +7,7 @@
 // backwards: https://gstreamer.freedesktop.org/documentation/additional/design/trickmodes.html?gi-language=c
 // images in Gtk frames: https://stackoverflow.com/questions/70921068/drag-and-drop-with-gtk4-connecting-dragsource-and-droptarget-via-contentprovide
 
+[CCode(lower_case_cprefix = "flyby_")]
 namespace FlyBy
 {
 	public class App : Gtk.Application {
@@ -68,6 +71,8 @@ namespace FlyBy
 		public bool hidden  { get; set; default = false; }
 		public double offset_x { get; set; default = 0; }	// as percentage of width
 		public double offset_y { get; set; default = 0; }	// as percentage of height
+		public double roll { get; set; default = 0; }
+		public double zoom { get; set; default = 1; }
 
 		public abstract string get_display_name();
 		//  public abstract string get_save_name();		// without extension
@@ -440,6 +445,15 @@ namespace FlyBy
 				}, null, null, null}
 			}, this);
 
+			this.frames.notify["n-items"].connect(() => {
+				bool active = (this.frames.get_n_items() >= 2);
+
+				foreach (string aname in this.list_actions())
+					if (aname.has_prefix("export-"))
+						(this.lookup_action(aname) as SimpleAction).set_enabled(active);
+			});
+			this.frames.notify_property("n-items");
+
 			//
 			var settings = new Settings ("org.neocities.albertt.flyby");
 			settings.bind("red-boost", this.stage, "red-coef", SettingsBindFlags.DEFAULT);
@@ -455,6 +469,16 @@ namespace FlyBy
 					if (keyval == Gdk.Key.n && (mod_state & Gdk.ModifierType.CONTROL_MASK) != 0)
 					{
 						this.application.activate();
+						return true;
+					}
+					if (keyval == Gdk.Key.o && (mod_state & Gdk.ModifierType.CONTROL_MASK) != 0)
+					{
+						this.activate_action("open", null);
+						return true;
+					}
+					if (keyval == Gdk.Key.s && (mod_state & Gdk.ModifierType.CONTROL_MASK) != 0)
+					{
+						this.activate_action("save-as", null);
 						return true;
 					}
 
@@ -936,15 +960,14 @@ namespace FlyBy
 	[GtkTemplate (ui = "/org/neocities/albertt/flyby/import_video.ui")]
 	class ImportVideoDlg : Gtk.Dialog
 	{
-		[GtkChild] Gtk.Picture	preview;
-		[GtkChild] Gtk.ComboBoxText	resize;
-		[GtkChild] Gtk.SpinButton	skip;
-		[GtkChild] Gtk.Label	info_label;
-		[GtkChild] Gtk.ProgressBar	progress;
-		uint	progress_updater_source_id;
-		[GtkChild] Gtk.Box	box;
-
-		private Gdk.Pixbuf first_frame;  // For preview
+		[GtkChild]	Gtk.Picture	preview;
+		[GtkChild]	Gtk.Box	resize_hole;
+			ResolutionBox	resize;
+		[GtkChild]	Gtk.SpinButton	skip;
+		[GtkChild]	Gtk.Label	info_label;
+		[GtkChild]	Gtk.ProgressBar	progress;
+			uint	progress_updater_source_id;
+		[GtkChild]	Gtk.Box	box;
 
 		public ImportVideoDlg(File file)
 		{
@@ -955,8 +978,6 @@ namespace FlyBy
 			var btn_import = this.add_button("_Begin", Gtk.ResponseType.OK);
 			var btn_cancel = this.add_button("_Cancel", Gtk.ResponseType.CANCEL);
 			btn_import.add_css_class("suggested-action");
-
-			resize.active = 0;
 
 			skip.output.connect(() => {
 				int interval_ms = skip.get_value_as_int();
@@ -974,10 +995,10 @@ namespace FlyBy
 			/* Init pipeline */
 			this.create_pipeline(file);		// In pre-rolled state
 			
-			this.first_frame = sample_to_pixbuf(appsink.pull_preroll());
+			var first_frame = sample_to_pixbuf(appsink.pull_preroll());
 			preview.paintable = Gdk.Texture.for_pixbuf(
-				this.first_frame.scale_simple(
-					(this.first_frame.width * 300) / this.first_frame.height,
+				first_frame.scale_simple(
+					(first_frame.width * 300) / first_frame.height,
 					300,
 					Gdk.InterpType.BILINEAR
 				)
@@ -987,34 +1008,31 @@ namespace FlyBy
 			int64 vid_total_frames, duration_ns;
 			this.get_vid_info(out fps, out vid_total_frames, out duration_ns);
 
+			resize = new ResolutionBox(Gdk.Rectangle() { width = first_frame.width, height = first_frame.height });
+			resize_hole.append(resize);
+
 			/* Interactivity */
 
 			// Label
 			TestDataFunc update_label = () => {
-				int w, h;
-				this.get_resize_size(out w, out h);
-
 				int64 no_frames = (skip.value == 0 ) ?
 					vid_total_frames :
 					(int64) (((double) vid_total_frames / fps) / (skip.value / 1000));
 
-				int64 bytes = w * h * 3 * no_frames;
+				int64 bytes = resize.size.width * resize.size.height * 3 * no_frames;
 
-				info_label.label = @"<i>$no_frames frames @ $(w)x$(h) ≈ <b>$(bytes/1048576) MB memory</b></i>";
+				info_label.label = @"<i>$no_frames frames @ $(resize.size.width)x$(resize.size.height) ≈ <b>$(bytes/1048576) MB memory</b></i>";
 			};
 			update_label();
 
-			resize.changed.connect(() => update_label());
+			resize.notify["size"].connect(() => update_label());
 			skip.notify["value"].connect(() => update_label());
 
 			// 
 
 			var videosz_capf = ppl.get_by_name("videosz-capf");
-			resize.changed.connect(() => {
-				int w, h;
-				this.get_resize_size(out w, out h);
-				
-				videosz_capf.set_property("caps", Gst.Caps.from_string(@"video/x-raw,width=$(w),height=$(h)"));
+			resize.notify["size"].connect(() => {
+				videosz_capf.set_property("caps", Gst.Caps.from_string(@"video/x-raw,width=$(resize.size.width),height=$(resize.size.height)"));
 			});
 
 			var videofps_capf = ppl.get_by_name("videofps-capf");
@@ -1133,49 +1151,18 @@ namespace FlyBy
 			int width_px, height_px;
 			caps.get_int("width", out width_px);
 			caps.get_int("height", out height_px);
-
+			
 			var buf = sample.get_buffer();
 			Gst.MapInfo map;
-
+			
 			if (buf.map(out map, Gst.MapFlags.READ))
 			{
 				var pixbuf = new Gdk.Pixbuf.from_bytes(new Bytes(map.data), Gdk.Colorspace.RGB, false, 8, width_px, height_px, width_px * 3);
 				buf.unmap(map);
-
 				return pixbuf;
 			}
 
 			throw new Error(0, 0, "Error converting GstSample to GdkPixbuf.");
-		}
-
-		void get_resize_size(out int width, out int height)
-		{
-			int active = resize.active;
-
-			if (active == -1)
-			{
-				/* Try to parse */
-				var text = resize.get_active_text().dup();
-
-				MatchInfo match;
-				if (/^\s*(\d+)\s*x\s*(\d+)\s*$/.match(text, 0, out match))
-				{
-					width  = int.parse(match.fetch(1));
-					height = int.parse(match.fetch(2));
-
-					return;
-				}
-				else
-					active = 0;
-			}
-
-			switch (active)
-			{
-				case 0: height = first_frame.height; width = first_frame.width; break;
-				case 1: height = 360; width = (first_frame.width * height)/first_frame.height; break;
-				case 2: height = 720; width = (first_frame.width * height)/first_frame.height; break;
-				case 3: height = 1080; width = (first_frame.width * height)/first_frame.height; break;
-			}
 		}
 
 		void get_vid_info(out double fps, out int64 frame_count, out int64 duration_ns)	// ppl must be <=PAUSED to work
@@ -1199,6 +1186,7 @@ namespace FlyBy
 	class ExportGifDlg : Gtk.Dialog
 	{
 		Gtk.FileChooserWidget	fc;
+		ResolutionBox	resize;
 
 		GLib.ListModel frames;
 
@@ -1219,17 +1207,41 @@ namespace FlyBy
 
 			var ab = insert_footer(this);
 			ab.pack_start(new Gtk.Label("Size"));
+			ab.pack_start(this.resize = new ResolutionBox(Gdk.Rectangle() {
+				width  = (this.frames.get_object(0) as Frame).cache.width,
+				height = (this.frames.get_object(0) as Frame).cache.height,
+				}) { valign = Gtk.Align.CENTER, halign = Gtk.Align.START }
+			);
+
+			//  {
+			//  	var midbox  = new Gtk.Box(Gtk.Orientation.VERTICAL, 0) { hexpand = true };
+
+			//  	var scale_p = new Gtk.Scale.with_range(Gtk.Orientation.HORIZONTAL, 0, frames.get_n_items(), 1) {
+			//  		//  restrict_to_fill_level = true
+			//  	};
+			//  	var scale_q = new Gtk.Scale.with_range(Gtk.Orientation.HORIZONTAL, 0, frames.get_n_items(), 1) {
+			//  		inverted = true
+			//  		//  restrict_to_fill_level = true
+			//  	};
+
+			//  	scale_p.adjustment.bind_property("value", scale_q, "fill-level");
+			//  	scale_q.adjustment.bind_property("value", scale_p, "fill-level");
+
+			//  	//  scale_q.adjustment.value = scale_q.adjustment.upper;
+
+			//  	midbox.append(scale_p);
+			//  	midbox.append(scale_q);
+				
+			//  	ab.set_center_widget(midbox);
+			//  }
 
 			/* Init pipeline */
 			this.create_pipeline(fps);		// In pre-rolled state
 			
-			//  var videosz_capf = ppl.get_by_name("videosz-capf");
-			//  resize.changed.connect(() => {
-			//  	int w, h;
-			//  	this.get_resize_size(out w, out h);
-				
-			//  	videosz_capf.set_property("caps", Gst.Caps.from_string(@"video/x-raw,width=$(w),height=$(h)"));
-			//  });
+			var videosz_capf = ppl.get_by_name("videosz-capf");
+			resize.notify["size"].connect(() => {
+				videosz_capf.set_property("caps", Gst.Caps.from_string(@"video/x-raw,width=$(resize.size.width),height=$(resize.size.height)"));
+			});
 
 			// Header buttons
 			this.response.connect((r) => {
@@ -1253,34 +1265,47 @@ namespace FlyBy
 		Gst.App.Src appsrc;
 		Gst.Element filesink;
 
+		delegate void PushFrameNFn(uint n);
+
 		void create_pipeline(double fps)
 		{
 			var render_size = (this.frames.get_object(0) as Frame).get_size();
 
 			ppl = Gst.parse_launch(
-				"appsrc block=false name=src " +
-				@"caps=video/x-raw,width=$(render_size.width),height=$(render_size.height),format=RGB,framerate=$((int) fps)/1" +
-				" ! gifenc repeat=-1 ! filesink name=sink"
+				"appsrc block=false name=src" +
+				@" caps=video/x-raw,width=$(render_size.width),height=$(render_size.height),format=RGB,framerate=$((int) fps)/1 " +
+				"! videoscale ! capsfilter name=videosz-capf caps=video/x-raw " +
+				"! gifenc repeat=-1 ! filesink name=sink"
 			) as Gst.Pipeline;
 
 			filesink = ppl.get_by_name("sink");
 			appsrc   = ppl.get_by_name("src") as Gst.App.Src;
 
+			uint n_frames = this.frames.get_n_items();
+			uint n_frames_sent = 0;
+			PushFrameNFn push_frame_n = (i) =>
+			{
+				var frame = this.frames.get_object(i < n_frames ? i : 2*n_frames - i - 1) as Frame;
+
+				if (frame.hidden)
+					return;
+
+				var buffer = new Gst.Buffer.wrapped_bytes(
+					Stage.render_frame(frame, render_size).pixel_bytes
+				);
+				buffer.pts = Gst.MSECOND * (Gst.ClockTime) (1000 / fps) * n_frames_sent++;
+
+				appsrc.push_buffer(buffer);
+			};
+
 			appsrc.need_data.connect(() => {
-				uint n_frames = this.frames.get_n_items();
+				uint i = 0;
 
-				for (uint i = 0; i < n_frames * 2; i++)
-				{
-					var buffer = new Gst.Buffer.wrapped_bytes(
-						Stage.render_frame(
-							this.frames.get_object(i < n_frames ? i : 2*n_frames - i - 1) as Frame,
-							render_size
-						).pixel_bytes
-					);
-					buffer.pts = Gst.MSECOND * (Gst.ClockTime) (1000 / fps) * i;
-
-					appsrc.push_buffer(buffer);
-				}
+				while (i < n_frames)
+					push_frame_n(i++);
+				i--;
+				while (--i > 0)
+					push_frame_n(i);
 
 				appsrc.end_of_stream();
 			});
@@ -1314,6 +1339,89 @@ namespace FlyBy
 						break;
 				}
 			});
+		}
+	}
+
+	private class ResolutionBox : Gtk.Box
+	{
+		Gtk.ComboBoxText combo;
+		Gdk.Rectangle orig_sz;
+
+		public Gdk.Rectangle size { get; private set; }
+
+		public ResolutionBox(Gdk.Rectangle orig_sz)
+		{
+			this.orig_sz = orig_sz;
+			combo.active = 0;
+		}
+
+		construct {
+			combo = new Gtk.ComboBoxText.with_entry();
+
+			combo.append_text("Don't resize");
+			combo.append_text("360p");
+			combo.append_text("720p");
+			combo.append_text("1080p");
+
+			combo.changed.connect(this.combo_changed);
+
+			append(combo);
+		}
+
+		void combo_changed()
+		{
+			int active = combo.active;
+
+			if (active == -1)
+			{
+				/* Try to parse */
+				var text = combo.get_active_text().dup();
+
+				MatchInfo match;
+				if (/^\s*(\d+)\s*x\s*(\d+)\s*$/.match(text, 0, out match))
+				{
+					this.size = Gdk.Rectangle() {
+						width  = int.parse(match.fetch(1)),
+						height = int.parse(match.fetch(2))
+					};
+
+					return;
+				}
+				else
+					active = 0;
+			}
+
+			var new_sz = Gdk.Rectangle();
+			bool portrait = false;
+
+			if (orig_sz.height > orig_sz.width)
+			{
+				portrait = true;
+				new_sz.width = orig_sz.height;
+				new_sz.height = orig_sz.width;
+			}
+			else
+			{
+				new_sz.width = orig_sz.width;
+				new_sz.height = orig_sz.height;
+			}
+
+			switch (active)
+			{
+				case 0: new_sz.height = new_sz.height; new_sz.width = orig_sz.width; break;
+				case 1: new_sz.height = 360; new_sz.width = (orig_sz.width * new_sz.height)/orig_sz.height; break;
+				case 2: new_sz.height = 720; new_sz.width = (orig_sz.width * new_sz.height)/orig_sz.height; break;
+				case 3: new_sz.height = 1080; new_sz.width = (orig_sz.width * new_sz.height)/orig_sz.height; break;
+			}
+
+			if (portrait)
+			{
+				var foo = new_sz.height;
+				new_sz.height = new_sz.width;
+				new_sz.width = foo;
+			}
+
+			this.size = new_sz;
 		}
 	}
 }
