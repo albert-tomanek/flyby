@@ -93,6 +93,7 @@
             <property name="width-request">200</property>
             <child>
               <object class="GtkStack" id="sidebar_stack">
+                <property name="transition-type">crossfade</property>
                 <child>
                   <object class="GtkLabel" id="drop_placeholder_label">
                     <property name="css-classes">caption-heading</property>
@@ -143,7 +144,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkSpinButton">
+                      <object class="GtkSpinButton" id="fps_box">
                         <property name="adjustment">fps_adj</property>
                         <property name="numeric">True</property>
                       </object>
@@ -211,74 +212,114 @@
   <menu id="export_menu">
     <item>
       <attribute name="action">win.export-composite</attribute>
-      <attribute name="label">Export as _image</attribute>
+      <attribute name="label">Export composite image</attribute>
     </item>
     <item>
       <attribute name="action">win.export-stereo</attribute>
-      <attribute name="label">Export as stereo _pair</attribute>
+      <attribute name="label">Export stereo image</attribute>
     </item>
     <item>
       <attribute name="action">win.export-gif</attribute>
-      <attribute name="label">Export as Wiggle _GIF</attribute>
+      <attribute name="label">Export Wiggle _GIF</attribute>
     </item>
   </menu>
   <object class="GtkPopover" id="goggles_popover">
     <child>
-      <object class="GtkGrid">
-        <property name="column-spacing">2</property>
-        <property name="row-spacing">1</property>
+      <object class="GtkListBox">
+        <property name="css-classes">rich-list
+boxed-list</property>
         <child>
-          <object class="GtkLabel">
-            <property name="can-focus">False</property>
-            <property name="can-target">False</property>
-            <property name="label">Red boost</property>
-            <layout>
-              <property name="column">0</property>
-              <property name="row">0</property>
-            </layout>
+          <object class="GtkListBoxRow">
+            <property name="selectable">False</property>
+            <property name="tooltip-markup">In some anaglyphic glasses the red filter is darker than the blue filter. Boosting the red channel can compensate for this.</property>
+            <child>
+              <object class="GtkBox">
+                <child>
+                  <object class="GtkLabel">
+                    <property name="can-focus">False</property>
+                    <property name="can-target">False</property>
+                    <property name="label">Red boost</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScale">
+                    <property name="adjustment">redboost_adj</property>
+                    <property name="draw-value">True</property>
+                    <property name="has-tooltip">True</property>
+                    <property name="hexpand">True</property>
+                    <property name="value-pos">left</property>
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
         <child>
-          <object class="GtkScale">
-            <property name="adjustment">redboost_adj</property>
-            <property name="draw-value">True</property>
-            <property name="has-tooltip">True</property>
-            <property name="tooltip-text">In some anaglyphic glasses the red filter is darker than the blue filter. Boosting the red channel can compensate for this.</property>
-            <layout>
-              <property name="column">0</property>
-              <property name="row">1</property>
-            </layout>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="can-focus">False</property>
-            <property name="can-target">False</property>
-            <property name="label">Anaglyph mode (A)</property>
-            <layout>
-              <property name="column">0</property>
-              <property name="row">2</property>
-            </layout>
-          </object>
-        </child>
-        <child>
-          <object class="GtkComboBoxText" id="ana_mode_box">
-            <property name="active">0</property>
-            <property name="editing-canceled">True</property>
-            <property name="entry-text-column">0</property>
-            <property name="has-tooltip">True</property>
+          <object class="GtkListBoxRow">
+            <property name="selectable">False</property>
             <property name="tooltip-text">The type of anaglyph to create</property>
-            <items>
-              <item id="0">None</item>
-              <item id="1">Monochrome</item>
-              <item id="2">Grayscale</item>
-              <item id="3">Half-color</item>
-              <item id="4">Full-color</item>
-            </items>
-            <layout>
-              <property name="column">0</property>
-              <property name="row">3</property>
-            </layout>
+            <child>
+              <object class="GtkBox">
+                <child>
+                  <object class="GtkLabel">
+                    <property name="can-focus">False</property>
+                    <property name="can-target">False</property>
+                    <property name="halign">start</property>
+                    <property name="label">Anaglyph mode</property>
+                    <property name="width-request">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkShortcutLabel">
+                    <property name="accelerator">M</property>
+                    <property name="valign">center</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkComboBoxText" id="ana_mode_box">
+                    <property name="active">0</property>
+                    <property name="editing-canceled">True</property>
+                    <property name="entry-text-column">0</property>
+                    <property name="halign">end</property>
+                    <property name="has-tooltip">True</property>
+                    <items>
+                      <item id="0">None</item>
+                      <item id="1">Monochrome</item>
+                      <item id="2">Grayscale</item>
+                      <item id="3">Half-color</item>
+                      <item id="4">Full-color</item>
+                    </items>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkListBoxRow" id="altern_row">
+            <property name="selectable">False</property>
+            <child>
+              <object class="GtkBox">
+                <child>
+                  <object class="GtkLabel">
+                    <property name="halign">start</property>
+                    <property name="label">Alternate frames</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkShortcutLabel">
+                    <property name="accelerator">A</property>
+                    <property name="valign">center</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSwitch" id="altern_switch">
+                    <property name="halign">end</property>
+                    <property name="hexpand">True</property>
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
       </object>

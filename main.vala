@@ -118,8 +118,13 @@ namespace FlyBy
 
 	class Stage : Gtk.DrawingArea
 	{
+		// Any animation is done by the application, not inside this class
+
 		public AnaglyphMethod method { get; set; }
 		public double red_coef { get; set; }
+
+		public bool show_l { get; set; default = true; }	// These are used for the `None, alternate` view mode
+		public bool show_r { get; set; default = true; }
 
 		public Frame frame_l { get; set; }
 		unowned Frame? old_frame_l;		// for disconnecting `notify` handler.
@@ -135,6 +140,7 @@ namespace FlyBy
 			this.hexpand = this.vexpand = true;
 			this.halign  = this.valign  = Gtk.Align.FILL;
 
+			// Listen to parameter changes on the frames
 			this.notify["frame-l"].connect(() => {
 				// Stop listening to changes in the old frame.
 				if (old_frame_l != null)
@@ -159,11 +165,14 @@ namespace FlyBy
 
 				old_frame_r = frame_r;
 			});
-			this.notify["method"].connect(() => { this.refresh_stage(); });
-			this.notify["red-coef"].connect(() => { this.refresh_stage(); });
+
+			this.notify["method"].connect(this.refresh_stage);
+			this.notify["red-coef"].connect(this.refresh_stage);
+			this.notify["show-l"].connect(this.refresh_stage);
+			this.notify["show-r"].connect(this.refresh_stage);
 
 			this.set_draw_func((_, cr, w, h) => { this.draw(cr); });
-			this.resize.connect(() => { this.refresh_stage(); });
+			this.resize.connect(this.refresh_stage);;
 
 			// UI stuff
 
@@ -251,20 +260,13 @@ namespace FlyBy
 
 		internal Gdk.Pixbuf render_composite(Gdk.Rectangle stage_sz)
 		{
-			if (this.frame_l != null)
-			{
-				var pixbuf_l = this.render_frame(this.frame_l, stage_sz);
-				
-				if (this.method == AnaglyphMethod.NONE || this.frame_r == null)
-					return pixbuf_l;
-				else
-				{
-					var pixbuf_r = this.render_frame(this.frame_r, stage_sz);
-					return make_anaglyph(pixbuf_l, pixbuf_r, this.method, (float) this.red_coef);
-				}
-			}
-			else
-				return new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
+			var pixbuf_l = (this.frame_l != null && this.show_l) ? this.render_frame(this.frame_l, stage_sz) : new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
+			var pixbuf_r = (this.frame_r != null && this.show_r) ? this.render_frame(this.frame_r, stage_sz) : new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
+
+			if (this.method == AnaglyphMethod.NONE)
+				return this.show_l ? pixbuf_l : pixbuf_r;
+
+			return make_anaglyph(pixbuf_l, pixbuf_r, this.method, (float) this.red_coef);
 		}
 
 		internal static Gdk.Pixbuf render_frame(Frame frame, Gdk.Rectangle stage_sz)	/// Render the composition layer with the given frame
@@ -302,28 +304,46 @@ namespace FlyBy
 		}
 	}
 
+	enum AnimationState
+	{
+		ALTERNATING,
+		NONE,
+		PLAY_FWD,
+		PLAY_BACKWD,
+	}
+
 	[GtkTemplate (ui = "/org/neocities/albertt/flyby/main.ui")]
 	class MainWindow : Gtk.ApplicationWindow
 	{
+		uint advance_frame_cb_id = 0;	// If there's a timed callback automatically changing the current frame, store its ID here. (so that there aren't multiple such cb's at once)
+
 		/* UI */
-		[GtkChild] Gtk.Box          stage_box;
-		           FlyBy.Stage      stage = new FlyBy.Stage();
+		[GtkChild]	Gtk.Box	stage_box;
+			FlyBy.Stage	stage = new FlyBy.Stage();
 
-		[GtkChild] Gtk.Box          sidebar;
-		[GtkChild] Gtk.Label        drop_placeholder_label;
-		[GtkChild] Gtk.Stack        sidebar_stack;
-		[GtkChild] Gtk.ColumnView   frame_listview;
+		[GtkChild]	Gtk.Box	sidebar;
+		[GtkChild]	Gtk.Label	drop_placeholder_label;
+		[GtkChild]	Gtk.Stack	sidebar_stack;
+		[GtkChild]	Gtk.ColumnView	frame_listview;
 
-		[GtkChild] Gtk.Box          media_bar;
-		[GtkChild] Gtk.ToggleButton play_button;
-		           int              play_state;		// -1 = advancing backward, 0 = not playing, 1 = advancing forward
-		[GtkChild] Gtk.Scale        position_scale;
-		[GtkChild] Gtk.Adjustment   position_adj;
-		[GtkChild] Gtk.Adjustment   fps_adj;
-		internal double fps { get; set; default = 12; }
+		[GtkChild]	Gtk.Box	media_bar;
+		[GtkChild]	Gtk.ToggleButton	play_button;
+		internal	StateMachine	anim_state {get;set;default = new StateMachine.with_edges_bidi(typeof(AnimationState), AnimationState.NONE, {
+					AnimationState.NONE, AnimationState.ALTERNATING,
+					AnimationState.NONE, AnimationState.PLAY_FWD,
+					AnimationState.NONE, AnimationState.PLAY_BACKWD,
+					AnimationState.PLAY_FWD, AnimationState.PLAY_BACKWD
+				});}
+
+		[GtkChild]	Gtk.Scale	position_scale;
+		[GtkChild]	Gtk.Adjustment	position_adj;
+		[GtkChild]	Gtk.SpinButton	fps_box;
+		internal	double	fps { get; set; default = 12; }
 		
-		[GtkChild] Gtk.ComboBoxText ana_mode_box;
-		[GtkChild] Gtk.Adjustment   redboost_adj;
+		[GtkChild]	Gtk.ComboBoxText	ana_mode_box;
+		[GtkChild]	Gtk.Adjustment	redboost_adj;
+		[GtkChild]	Gtk.Switch	altern_switch;
+		[GtkChild]	Gtk.ListBoxRow	altern_row;
 		
 		GLib.ListStore frames = new ListStore(typeof(FlyBy.Frame));
 		Gtk.SingleSelection selection;
@@ -342,9 +362,10 @@ namespace FlyBy
 		}
 		
 		construct {
-			bind_property("fps", fps_adj, "value", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
+			bind_property("fps", fps_box, "value", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
 
 			init_ui();
+			init_animation();
 
 			this.add_action_entries({
 				{"open", () => {
@@ -489,10 +510,20 @@ namespace FlyBy
 						return true;
 					}
 
-					// New instance (Ctrl+n)
-					if (keyval == Gdk.Key.a)
+					// Change anaglyph mode
+					if (keyval == Gdk.Key.m)
 					{
 						this.ana_mode_box.active = (this.ana_mode_box.active + 1) % ((EnumClass) typeof(AnaglyphMethod).class_ref()).maximum;
+						return true;
+					}
+					if (keyval == Gdk.Key.a)
+					{
+						print("%d %b\n", this.anim_state.state, this.anim_state.state == AnimationState.NONE);
+						if (this.anim_state.state == AnimationState.NONE)
+							this.anim_state.change_state(AnimationState.ALTERNATING);
+						if (this.anim_state.state == AnimationState.ALTERNATING)
+							this.anim_state.change_state(AnimationState.NONE);
+
 						return true;
 					}
 
@@ -612,27 +643,40 @@ namespace FlyBy
 			}
 
 			/* Play controls */
-			this.play_button.notify["active"].connect(() => {
-				if (this.play_button.active)
-				{
-					this.play_button.icon_name = "media-playback-stop-symbolic";
-					this.play_state = 1;
-					Timeout.add(
-						(uint) (1000 / this.fps),
-						() => { this.advance_frame_recursive(); return false; }
-					);
-				}
-				else
-				{
-					this.play_button.icon_name = "media-playback-start-symbolic";
-					this.play_state = 0;	// advance_frame_recursive will stop by itself
-				}
-			});
-			this.selection.bind_property("selected", this.position_adj, "value", BindingFlags.BIDIRECTIONAL,
-				(b, src, ref dst) => { dst.set_double((double) src.get_uint()); return true; },
-				(b, src, ref dst) => { dst.set_uint((uint) src.get_double()); return true; }
-			);
-			this.frames.items_changed.connect(() => { this.position_adj.upper = (double) this.frames.get_n_items() - 1; });		// When the length changes
+			{
+				//  fps_box.output.connect(() => {
+				//  	fps_box.set_text(@"$(fps_box.get_value()) fps");
+				//  	return true;
+				//  });
+
+				this.anim_state.notify["state"].connect(() => {
+					if (this.anim_state.state == AnimationState.PLAY_FWD || this.anim_state.state == AnimationState.PLAY_BACKWD)
+					{
+						this.play_button.icon_name = "media-playback-stop-symbolic";
+						this.play_button.active = true;
+					}
+					else
+					{
+						this.play_button.icon_name = "media-playback-start-symbolic";
+						this.play_button.active = false;
+					}
+
+					this.play_button.sensitive = this.anim_state.orthogonal_to(AnimationState.PLAY_FWD);
+				});
+
+				this.play_button.toggled.connect(() => {
+					if (this.play_button.active)
+						this.anim_state.change_state(AnimationState.PLAY_FWD);
+					else
+						this.anim_state.change_state(AnimationState.NONE);
+				});
+
+				this.selection.bind_property("selected", this.position_adj, "value", BindingFlags.BIDIRECTIONAL,
+					(b, src, ref dst) => { dst.set_double((double) src.get_uint()); return true; },
+					(b, src, ref dst) => { dst.set_uint((uint) src.get_double()); return true; }
+				);
+				this.frames.items_changed.connect(() => { this.position_adj.upper = (double) this.frames.get_n_items() - 1; });		// When the length changes
+			}
 
 			/* Stage */
 			{
@@ -659,6 +703,29 @@ namespace FlyBy
 
 				this.stage.add_controller(scroll);
 			}
+
+			/* View menu */
+			{
+				altern_switch.state_set.connect(to_state => {
+					if (to_state == false && this.anim_state.state == AnimationState.ALTERNATING)
+					{
+						this.anim_state.change_state(AnimationState.NONE);
+						altern_switch.state = false;
+					}
+					if (to_state == true)
+					{
+						altern_switch.active = altern_switch.state = this.anim_state.change_state(AnimationState.ALTERNATING);
+					}
+
+					return true;
+				});
+
+				TestDataFunc refresh_can_animate = () => {
+					this.altern_row.sensitive = this.anim_state.orthogonal_to(AnimationState.ALTERNATING) && this.stage.method == AnaglyphMethod.NONE;
+				};
+				this.anim_state.notify["state"].connect(() => refresh_can_animate());
+				this.stage.notify["method"].connect(() => refresh_can_animate());
+			}
 			
 			/* Modal dialogs */
 			//  this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
@@ -672,18 +739,67 @@ namespace FlyBy
 			//  });
 		}
 
+		uint anim_cb_timer = 0;
+
 		void advance_frame_recursive()
 		{
-			if (this.position_adj.value == this.position_adj.upper || this.position_adj.value == this.position_adj.lower)
-				this.play_state = -this.play_state;
+			if (this.position_adj.value == this.position_adj.upper)
+				this.anim_state.change_state(AnimationState.PLAY_BACKWD);
+			if (this.position_adj.value == this.position_adj.lower)
+				this.anim_state.change_state(AnimationState.PLAY_FWD);
 
-			this.position_adj.value += this.play_state;	// either 1 or -1
+			this.position_adj.value += (this.anim_state.state == AnimationState.PLAY_FWD) ? 1 : -1;
 
-			if (this.play_state != 0)	// If it is, they've asked us to stop.
-				Timeout.add(
-					(this.selection.selected_item as Frame).hidden ? 0 : (uint) (1000 / this.fps),
-					() => { this.advance_frame_recursive(); return false; }
-				);	// We need to renew this every time because they might have changed the fps setting while we were playing.
+			anim_cb_timer = Timeout.add(
+				(this.selection.selected_item as Frame).hidden ? 0 : (uint) (1000 / this.fps),
+				() => { this.advance_frame_recursive(); return false; }
+			);	// We need to renew this every time because they might have changed the fps setting while we were playing.
+		}
+
+		void alternate_frames_recursive()
+		{
+			if (this.stage.show_l)
+			{
+				this.stage.show_l = false;
+				this.stage.show_r = true;
+			}
+			else
+			{
+				this.stage.show_l = true;
+				this.stage.show_r = false;
+			}
+
+			anim_cb_timer = Timeout.add(
+				(uint) (1000 / this.fps),
+				() => { this.alternate_frames_recursive(); return false; }
+			);	// We need to renew this every time because they might have changed the fps setting while we were playing.
+		}
+
+		void init_animation()
+		{
+			this.anim_state.on_transition(AnimationState.NONE, AnimationState.PLAY_FWD, () => { this.advance_frame_recursive(); return true; });
+
+			SourceFunc stop_timer = () => {
+				GLib.Source.remove(anim_cb_timer);
+				return true;
+			};
+			this.anim_state.on_transition(AnimationState.PLAY_FWD, AnimationState.NONE, stop_timer);
+			this.anim_state.on_transition(AnimationState.PLAY_BACKWD, AnimationState.NONE, stop_timer);
+			
+			this.anim_state.on_enter(AnimationState.ALTERNATING, () => {
+				if (this.stage.method != AnaglyphMethod.NONE)
+					return false;
+				
+				this.alternate_frames_recursive();
+				return true;
+			});
+			this.anim_state.on_leave(AnimationState.ALTERNATING, () => {
+				this.stage.show_l = true;
+				this.stage.show_r = true;
+
+				GLib.Source.remove(anim_cb_timer);
+				return true;
+			});
 		}
 
 		void setup_row(Gtk.ListItem li)
