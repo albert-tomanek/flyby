@@ -518,9 +518,8 @@ namespace FlyBy
 					}
 					if (keyval == Gdk.Key.a)
 					{
-						print("%d %b\n", this.anim_state.state, this.anim_state.state == AnimationState.NONE);
 						if (this.anim_state.state == AnimationState.NONE)
-							this.anim_state.change_state(AnimationState.ALTERNATING);
+							print("%b", this.anim_state.change_state(AnimationState.ALTERNATING));
 						if (this.anim_state.state == AnimationState.ALTERNATING)
 							this.anim_state.change_state(AnimationState.NONE);
 
@@ -723,6 +722,7 @@ namespace FlyBy
 				TestDataFunc refresh_can_animate = () => {
 					this.altern_row.sensitive = this.anim_state.orthogonal_to(AnimationState.ALTERNATING) && this.stage.method == AnaglyphMethod.NONE;
 				};
+				refresh_can_animate();
 				this.anim_state.notify["state"].connect(() => refresh_can_animate());
 				this.stage.notify["method"].connect(() => refresh_can_animate());
 			}

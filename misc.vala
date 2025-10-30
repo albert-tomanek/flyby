@@ -156,7 +156,7 @@ class StateMachine : Object
 
 	public ulong on_transition(int from_state, int to_state, SourceFunc cb)
 	{
-		return this.transitioned.connect_after((from, to, ref rc) => {  // TODO: Use a GSignalAccumulator instead of `ref rc`
+		return this.transitioned.connect((from, to, ref rc) => {  // TODO: Use a GSignalAccumulator instead of `ref rc`
 			if (from == from_state && to == to_state)
 				rc = rc && cb();
 		});
