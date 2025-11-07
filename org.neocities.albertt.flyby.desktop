@@ -1,9 +1,11 @@
 [Desktop Entry]
 Name=FlyBy
 Comment=Make photo bursts
-Exec=flatpak run org.neocities.albertt.flyby
+Exec=org.neocities.albertt.flyby %F
 Icon=org.neocities.albertt.flyby
+MimeType=application/x-flyby;
 Type=Application
 Terminal=false
-Categories=Multimedia;
+Categories=AudioVideo;
 Keywords=3D;
+StartupWMClass=org.neocities.albertt.flyby

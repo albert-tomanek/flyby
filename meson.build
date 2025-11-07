@@ -33,3 +33,9 @@ install_data('org.neocities.albertt.flyby.gschema.xml', install_dir : get_option
 gnome.post_install(
 	glib_compile_schemas: true
 )
+
+install_data('org.neocities.albertt.flyby.desktop', install_dir: join_paths(get_option('datadir'), 'applications'))
+
+install_data('org.neocities.albertt.flyby.svg', install_dir: join_paths(get_option('datadir'), 'icons/hicolor/scalable/apps'))
+
+install_data('flyby-mime.xml', install_dir: join_paths(get_option('datadir'), 'mime/packages'))
