@@ -38,4 +38,6 @@ install_data('org.neocities.albertt.flyby.desktop', install_dir: join_paths(get_
 
 install_data('org.neocities.albertt.flyby.svg', install_dir: join_paths(get_option('datadir'), 'icons/hicolor/scalable/apps'))
 
+install_data('org.neocities.albertt.flyby.appdata.xml', install_dir: join_paths(get_option('datadir'), 'appdata'))
+
 install_data('flyby-mime.xml', install_dir: join_paths(get_option('datadir'), 'mime/packages'))
