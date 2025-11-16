@@ -7,4 +7,5 @@ This is an app for any situation where you take multiple successive pictures of 
 * Animate the photo sequence and export it
 * View photo pairs using 3D glasses
 
-![](screenshot.png)
+![](screenshot1.png)
+![](screenshot2.png)
