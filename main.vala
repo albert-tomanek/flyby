@@ -11,17 +11,106 @@
 namespace FlyBy
 {
 	public class App : Gtk.Application {
-		public App () {
-			Object(
-				application_id: "org.neocities.albertt.flyby",
-				flags: ApplicationFlags.HANDLES_OPEN
-			);
+		public static int main(string[] args)
+		{
+			Gst.init(ref args);
+
+			var app = new App();
+			return app.run(args);
+		}
+
+		construct {
+			this.application_id = "org.neocities.albertt.flyby";
+			this.flags = ApplicationFlags.HANDLES_OPEN | ApplicationFlags.HANDLES_COMMAND_LINE;
+
+			this.command_line.connect(this.on_command_line);
+		}
+
+		bool 	arg_version	= false;
+		string?	arg_export_jps	= null;
+		string?	arg_input_file	= null;
+
+		public int on_command_line (ApplicationCommandLine command_line) {
+			int rc = 0;
+			this.hold ();	// keep the application running until we are done with this commandline
+			
+			{
+				OptionEntry[] options = {
+					{ "version",	0, 0, OptionArg.NONE,	ref arg_version,	"Display version number",	null },
+					{ "export-jps",	0, 0, OptionArg.FILENAME,	ref arg_export_jps,	"Export the given input file as .JPS",	"JPS_FILE" },
+					{ null }
+				};
+
+				// We have to make an extra copy of the array, since .parse assumes
+				// that it can remove strings from the array without freeing them.
+				string[] args = command_line.get_arguments ();
+				string*[] _args = new string[args.length];
+				for (int i = 0; i < args.length; i++) {
+					_args[i] = args[i];
+				}
+
+				try {
+					var opt_context = new OptionContext ("[FILE]");
+					opt_context.set_help_enabled (true);
+					opt_context.add_main_entries (options, null);
+					unowned string[] tmp = _args;
+					opt_context.parse (ref tmp);
+
+					arg_input_file = tmp.length >= 2 ? tmp[1] : null;
+
+					if (arg_input_file == null && arg_export_jps != null)
+					{
+						stderr.printf("Error: Must provide input file\n");
+						return 1;
+					}
+
+				} catch (OptionError e) {
+					command_line.print ("error: %s\n", e.message);
+					command_line.print ("Run '%s --help' to see a full list of available command line options.\n", args[0]);
+					return 1;
+				}
+			}
+			
+			rc = base.command_line(command_line);
+			this.activate();
+
+			return rc;
 		}
 
 		protected override void activate () {
-			var win = new FlyBy.MainWindow(this);
-			this.add_window(win);
-			win.show();
+			if (arg_version)
+			{
+				stdout.printf("%s\n", this.version);
+				this.quit();
+			}
+			else if (arg_export_jps != null)
+			{
+				this.export_jps_headless.begin(
+					File.new_for_path(arg_input_file),
+					File.new_for_path(arg_export_jps),
+					(_, ctx) => {
+						try {
+							this.export_jps_headless.end(ctx);
+						} catch (Error e) {
+							stderr.printf("Error: %s\n", e.message);
+						}
+						this.quit();
+					}
+				);
+			}
+			else
+			{
+				var win = new FlyBy.MainWindow(this);
+				this.add_window(win);
+				win.close_request.connect(() => {
+					this.quit();
+					return false;   // continue closing the window
+				});
+				win.show();
+
+				if (arg_input_file != null)
+					win.open.begin(File.new_for_path(arg_input_file));
+			}
 		}
 
 		protected override void open (File[] files, string hint) {
@@ -31,18 +120,25 @@ namespace FlyBy
 				this.add_window(win);
 				win.show();
 
-				win.open.begin(file, (_, ctx) => {
-					win.open.end(ctx);
-				});
+				win.open.begin(file);
 			}
 		}
 
-		public static int main(string[] args)
+		private async bool export_jps_headless(File in_fb, File out_jps)
 		{
-			Gst.init(ref args);
+			var frames = new ListStore(typeof(FlyBy.Frame));
+			double fps;
 
-			var app = new App();
-			return app.run(args);
+			yield FlyBy.NativeFile.load(in_fb, frames, out fps);
+
+			var stage = new Stage();
+			stage.frame_l = frames.get_object(0) as Frame;
+			stage.frame_r = frames.get_object(1) as Frame;
+
+			yield stage.export_stereo(out_jps, 90);
+			stdout.printf("%s\n", out_jps.get_path());
+
+			return true;
 		}
 
 		// Useful stuff
@@ -250,12 +346,15 @@ namespace FlyBy
 
 		private void refresh_stage()
 		{
-			this.pixbuf = this.render_composite(Gdk.Rectangle() {
-				width  = this.get_width(),
-				height = this.get_height()
-			});
+			if (this.get_realized())
+			{
+				this.pixbuf = this.render_composite(Gdk.Rectangle() {
+					width  = this.get_width(),
+					height = this.get_height()
+				});
 
-			this.queue_draw();
+				this.queue_draw();
+			}
 		}
 
 		internal Gdk.Pixbuf render_composite(Gdk.Rectangle stage_sz)
@@ -301,6 +400,118 @@ namespace FlyBy
 			}
 
 			return render;
+		}
+
+		/* Import/Export */
+
+		public async void export_composite(File file, int qual)
+		{
+			Gdk.Pixbuf composite = this.render_composite(Gdk.Rectangle() {
+				width  = this.frame_l.cache.width,
+				height = this.frame_l.cache.height,
+			});
+
+			yield composite.save_to_streamv_async(yield file.create_async(FileCreateFlags.REPLACE_DESTINATION), "jpeg", {"quality"}, {qual.to_string()});
+		}
+
+		public async bool export_stereo(File file, int qual)
+		{
+			if (this.frame_l == null || this.frame_r == null)
+				return false;
+
+			var render_sz = Gdk.Rectangle() {
+				width  = this.frame_l.cache.width,
+				height = this.frame_l.cache.height,
+			};
+
+			Gdk.Pixbuf render_l = this.render_frame(this.frame_l, render_sz);
+			Gdk.Pixbuf render_r = this.render_frame(this.frame_r, render_sz);
+
+			var side_by_side = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, render_sz.width, render_l.height + render_r.height);
+			render_l.copy_area(0, 0, render_l.width, render_l.height, side_by_side, 0, 0);
+			render_r.copy_area(0, 0, render_r.width, render_r.height, side_by_side, 0, render_l.height);
+
+			var out_stream = new MemoryOutputStream.resizable();
+			yield side_by_side.save_to_streamv_async(out_stream, "jpeg", {"quality"}, {qual.to_string()});
+			out_stream.close();
+
+			owned uint8[] jpg_bytes_arr = out_stream.steal_data();
+			jpg_bytes_arr.length = (int) out_stream.get_data_size ();
+
+			var jpg_bytes = new ByteArray.take(jpg_bytes_arr);
+			JPS.implant_jps_header(
+				jpg_bytes,
+				JPS.Info.MTYPE_STEREOSCOPIC_IMAGE |
+				JPS.Info.LAYOUT_OVERUNDER |
+				JPS.Info.LEFT_FIELD_FIRST
+			);
+
+			yield (yield file.create_async(FileCreateFlags.REPLACE_DESTINATION)).write_bytes_async(ByteArray.free_to_bytes(jpg_bytes));
+
+			return true;
+		}
+	}
+
+	namespace NativeFile
+	{
+		public async void load(File file, ListStore out_frames, out double fps)
+		requires(out_frames.item_type == typeof(FlyBy.Frame))
+		{
+			bool present;
+			var arch = new Gsf.InfileZip(new Gsf.InputStdio(file.get_path()));
+			var media_dir = arch.child_by_name("media") as Gsf.InfileZip;
+
+			/* Read manifest */
+			var info_file = arch.child_by_name("info.json");
+
+			var info_json = new uint8[info_file.size + 1];
+			info_file.read((size_t) info_file.size, info_json);
+
+			var parser = new Json.Parser.immutable_new();
+			parser.load_from_data((string) info_json);
+			var info = parser.get_root();
+
+			var cur = new Json.Reader(info);
+
+			if (cur.read_member("fps"))
+				fps = cur.get_double_value();
+			cur.end_member();
+			
+			/* Load frames */
+			cur.read_member("frames");
+
+			for (int i = 0; i < cur.count_elements(); i++)
+			{
+				//  yield;	// FIXME
+				//  message(@"$(i)");
+				var frame = new FrameInMem();
+
+				cur.read_element(i);
+					cur.read_member("filename");
+					frame.filename = cur.get_string_value();
+					cur.end_member();
+
+					if (cur.read_member("hidden"))
+						frame.hidden = cur.get_boolean_value();
+					cur.end_member();
+
+					if (cur.read_member("offset-x"))
+						frame.offset_x = cur.get_double_value();
+					cur.end_member();
+
+					if (cur.read_member("offset-y"))
+						frame.offset_y = cur.get_double_value();
+					cur.end_member();
+				cur.end_element();
+				
+				var img_file = media_dir.child_by_name(frame.filename);
+				var img_file_data = new uint8[img_file.size + 1];
+				img_file.read((size_t) img_file.size, img_file_data);
+
+				frame.cache = new Gdk.Pixbuf.from_stream(new MemoryInputStream.from_data(img_file_data));
+				out_frames.append(frame);
+			}
+			cur.end_member();
 		}
 	}
 
@@ -377,10 +588,8 @@ namespace FlyBy
 		
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
-							this.open.begin(d.get_file(), (_, ctx) => {
-								this.open.end(ctx);
-							});
-		
+							this.open.begin(d.get_file());
+						
 						d.close();
 					});
 				}, null, null, null},
@@ -422,8 +631,8 @@ namespace FlyBy
 		
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
-							this.export_composite(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
-								this.export_composite.end(ctx);
+							this.stage.export_composite(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
+								this.stage.export_composite.end(ctx);
 								d.close();
 							});
 
@@ -450,8 +659,8 @@ namespace FlyBy
 		
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
-							this.export_stereo(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
-								this.export_stereo.end(ctx);
+							this.stage.export_stereo(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
+								this.stage.export_stereo.end(ctx);
 								d.close();
 							});
 
@@ -886,62 +1095,11 @@ namespace FlyBy
 		public async void open(File file)
 		{
 			this.title = @"FlyBy – $(file.get_basename())";
+			double _fps;
 
-			bool present;
-			var arch = new Gsf.InfileZip(new Gsf.InputStdio(file.get_path()));
-			var media_dir = arch.child_by_name("media") as Gsf.InfileZip;
+			yield FlyBy.NativeFile.load(file, this.frames, out _fps);
 
-			/* Read manifest */
-			var info_file = arch.child_by_name("info.json");
-
-			var info_json = new uint8[info_file.size + 1];
-			info_file.read((size_t) info_file.size, info_json);
-
-			var parser = new Json.Parser.immutable_new();
-			parser.load_from_data((string) info_json);
-			var info = parser.get_root();
-
-			var cur = new Json.Reader(info);
-
-			if (cur.read_member("fps"))
-				this.fps = cur.get_double_value();
-			cur.end_member();
-			
-			/* Load frames */
-			cur.read_member("frames");
-
-			for (int i = 0; i < cur.count_elements(); i++)
-			{
-				//  yield;	// FIXME
-				//  message(@"$(i)");
-				var frame = new FrameInMem();
-
-				cur.read_element(i);
-					cur.read_member("filename");
-					frame.filename = cur.get_string_value();
-					cur.end_member();
-
-					if (cur.read_member("hidden"))
-						frame.hidden = cur.get_boolean_value();
-					cur.end_member();
-
-					if (cur.read_member("offset-x"))
-						frame.offset_x = cur.get_double_value();
-					cur.end_member();
-
-					if (cur.read_member("offset-y"))
-						frame.offset_y = cur.get_double_value();
-					cur.end_member();
-				cur.end_element();
-				
-				var img_file = media_dir.child_by_name(frame.filename);
-				var img_file_data = new uint8[img_file.size + 1];
-				img_file.read((size_t) img_file.size, img_file_data);
-
-				frame.cache = new Gdk.Pixbuf.from_stream(new MemoryInputStream.from_data(img_file_data));
-				this.frames.append(frame);
-			}
-			cur.end_member();
+			this.fps = _fps;
 		}
 
 		public async void save(File file)
@@ -1024,52 +1182,6 @@ namespace FlyBy
 			}
 
 			arch.close();
-		}
-
-		/* Import/Export */
-
-		async void export_composite(File file, int qual)
-		{
-			Gdk.Pixbuf composite = this.stage.render_composite(Gdk.Rectangle() {
-				width  = this.stage.frame_l.cache.width,
-				height = this.stage.frame_l.cache.height,
-			});
-
-			yield composite.save_to_streamv_async(yield file.create_async(FileCreateFlags.NONE), "jpeg", {"quality"}, {qual.to_string()});
-		}
-
-		async void export_stereo(File file, int qual)
-		{
-			if (stage.frame_l == null || stage.frame_r == null)
-				return;
-
-			var render_sz = Gdk.Rectangle() {
-				width  = this.stage.frame_l.cache.width,
-				height = this.stage.frame_l.cache.height,
-			};
-
-			Gdk.Pixbuf render_l = this.stage.render_frame(this.stage.frame_l, render_sz);
-			Gdk.Pixbuf render_r = this.stage.render_frame(this.stage.frame_r, render_sz);
-
-			var side_by_side = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, render_sz.width, render_l.height + render_r.height);
-			render_l.copy_area(0, 0, render_l.width, render_l.height, side_by_side, 0, 0);
-			render_r.copy_area(0, 0, render_r.width, render_r.height, side_by_side, 0, render_l.height);
-
-			var out_stream = new MemoryOutputStream.resizable();
-			yield side_by_side.save_to_streamv_async(out_stream, "jpeg", {"quality"}, {qual.to_string()});
-			out_stream.close();
-
-			owned uint8[] jpg_bytes_arr = out_stream.steal_data();
-			jpg_bytes_arr.length = (int) out_stream.get_data_size ();
-
-			var jpg_bytes = new ByteArray.take(jpg_bytes_arr);
-			JPS.implant_jps_header(
-				jpg_bytes,
-				JPS.Info.MTYPE_STEREOSCOPIC_IMAGE |
-				JPS.Info.LAYOUT_OVERUNDER |
-				JPS.Info.LEFT_FIELD_FIRST
-			);
-			yield (yield file.create_async(FileCreateFlags.NONE)).write_bytes_async(ByteArray.free_to_bytes(jpg_bytes));
 		}
 	}
 
