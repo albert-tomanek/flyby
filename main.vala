@@ -7,6 +7,7 @@
 // backwards: https://gstreamer.freedesktop.org/documentation/additional/design/trickmodes.html?gi-language=c
 // images in Gtk frames: https://stackoverflow.com/questions/70921068/drag-and-drop-with-gtk4-connecting-dragsource-and-droptarget-via-contentprovide
 
+
 [CCode(lower_case_cprefix = "flyby_")]
 namespace FlyBy
 {
@@ -27,17 +28,24 @@ namespace FlyBy
 		}
 
 		bool 	arg_version	= false;
-		string?	arg_export_jps	= null;
 		string?	arg_input_file	= null;
+		string?	arg_export_jps	= null;
+		string?	arg_export_comp	= null;
+		string?	arg_comp_meth_	= null;
+		AnaglyphMethod arg_comp_meth;
 
 		public int on_command_line (ApplicationCommandLine command_line) {
 			int rc = 0;
 			this.hold ();	// keep the application running until we are done with this commandline
-			
+
 			{
+                var anaglyphmethod_enum = ((EnumClass) typeof(AnaglyphMethod).class_ref());
+
 				OptionEntry[] options = {
 					{ "version",	0, 0, OptionArg.NONE,	ref arg_version,	"Display version number",	null },
 					{ "export-jps",	0, 0, OptionArg.FILENAME,	ref arg_export_jps,	"Export the given input file as .JPS",	"JPS_FILE" },
+					{ "export-composite",	0, 0, OptionArg.FILENAME,	ref arg_export_comp,	"Composite frames in .FLYBY file into a .JPG. Must specify method with -m.",	"JPG_FILE" },
+					{ "method",	'm', 0, OptionArg.STRING,	ref arg_comp_meth_,	ALL_ANAGLYPHS_STR, "METHOD" },
 					{ null }
 				};
 
@@ -58,10 +66,28 @@ namespace FlyBy
 
 					arg_input_file = tmp.length >= 2 ? tmp[1] : null;
 
-					if (arg_input_file == null && arg_export_jps != null)
+					if (arg_input_file == null && (arg_export_jps != null || arg_export_comp != null))
 					{
 						stderr.printf("Error: Must provide input file\n");
 						return 1;
+					}
+					if (arg_export_comp != null)
+					{
+						if (arg_comp_meth_ == null)
+						{
+							stderr.printf("Error: Must provide composition method with -m\n");
+							return 1;
+						}
+
+						var? val = anaglyphmethod_enum.get_value_by_name(arg_comp_meth_);
+
+						if (val != null)
+							arg_comp_meth = val.value;
+						else
+						{
+							stderr.printf("Invalid argument for -m\n");
+							return 1;
+						}
 					}
 
 				} catch (OptionError e) {
@@ -70,9 +96,11 @@ namespace FlyBy
 					return 1;
 				}
 			}
-			
-			rc = base.command_line(command_line);
-			this.activate();
+
+			/*rc = */base.command_line(command_line);
+
+			if (rc == 0)
+				this.activate();
 
 			return rc;
 		}
@@ -98,12 +126,28 @@ namespace FlyBy
 					}
 				);
 			}
+			else if (arg_export_comp != null)
+			{
+				this.export_comp_headless.begin(
+					File.new_for_path(arg_input_file),
+					File.new_for_path(arg_export_comp),
+                    arg_comp_meth,
+					(_, ctx) => {
+						try {
+							this.export_comp_headless.end(ctx);
+						} catch (Error e) {
+							stderr.printf("Error: %s\n", e.message);
+						}
+						this.quit();
+					}
+				);
+			}
 			else
 			{
 				var win = new FlyBy.MainWindow(this);
 				this.add_window(win);
 				win.close_request.connect(() => {
-					this.quit();
+					win.close();
 					return false;   // continue closing the window
 				});
 				win.show();
@@ -141,12 +185,32 @@ namespace FlyBy
 			return true;
 		}
 
+		private async bool export_comp_headless(File in_fb, File out_jps, AnaglyphMethod meth)
+		{
+			var frames = new ListStore(typeof(FlyBy.Frame));
+			double fps;
+
+			yield FlyBy.NativeFile.load(in_fb, frames, out fps);
+
+			var stage = new Stage();
+			stage.frame_l = frames.get_object(0) as Frame;
+			stage.frame_r = frames.get_object(1) as Frame;
+
+            stage.method = meth;
+			yield stage.export_composite(out_jps, 90);
+			stdout.printf("%s\n", out_jps.get_path());
+
+			return true;
+		}
+
 		// Useful stuff
 
 		public static Gtk.FileFilter ff_images;
 		public static Gtk.FileFilter ff_videos;
 		public static Gtk.FileFilter ff_flyby;
-	
+
+        static string ALL_ANAGLYPHS_STR;
+
 		static construct {
 			ff_images = new Gtk.FileFilter() { name = "All image formats" };
 			ff_images.add_mime_type("image/jpeg");
@@ -157,7 +221,17 @@ namespace FlyBy
 
 			ff_flyby = new Gtk.FileFilter() { name = "FlyBy files" };
 			ff_flyby.add_pattern("*.flyby");
-		}	
+
+            //
+
+            var anaglyphmethod_enum = ((EnumClass) typeof(AnaglyphMethod).class_ref());
+            string[] anaglyphmethod_options = {};
+
+            for (int i = anaglyphmethod_enum.minimum; i <= anaglyphmethod_enum.maximum; i++)
+                anaglyphmethod_options += ((AnaglyphMethod) i).to_string();
+
+            ALL_ANAGLYPHS_STR = "Method used for compositing frames. Possible methods: " + string.joinv(", ", anaglyphmethod_options);
+		}
 	}
 
 	abstract class Frame : Object
@@ -246,7 +320,7 @@ namespace FlyBy
 				frame_l_notify_binding = frame_l.notify.connect(() => { this.refresh_stage(); });
 				// We just got a new frame_l and that means also a new frame_l.cache. Trigger a redraw.
 				frame_l.notify_property("cache");
-				
+
 				old_frame_l = frame_l;
 			});
 			this.notify["frame-r"].connect(() => {
@@ -310,7 +384,7 @@ namespace FlyBy
 				if (nth_click == 2)
 				{
 					this.frame_l.offset_x = 0;
-					this.frame_l.offset_y = 0;					
+					this.frame_l.offset_y = 0;
 				}
 			});
 		}
@@ -371,7 +445,7 @@ namespace FlyBy
 		internal static Gdk.Pixbuf render_frame(Frame frame, Gdk.Rectangle stage_sz)	/// Render the composition layer with the given frame
 		{
 			var render = new Gdk.Pixbuf(Gdk.Colorspace.RGB, false, 8, stage_sz.width, stage_sz.height);
-			
+
 			if (frame.cache != null)
 			{
 				var letterbox = Stage.get_letterbox(frame.get_size(), stage_sz);
@@ -476,7 +550,7 @@ namespace FlyBy
 			if (cur.read_member("fps"))
 				fps = cur.get_double_value();
 			cur.end_member();
-			
+
 			/* Load frames */
 			cur.read_member("frames");
 
@@ -503,7 +577,7 @@ namespace FlyBy
 						frame.offset_y = cur.get_double_value();
 					cur.end_member();
 				cur.end_element();
-				
+
 				var img_file = media_dir.child_by_name(frame.filename);
 				var img_file_data = new uint8[img_file.size + 1];
 				img_file.read((size_t) img_file.size, img_file_data);
@@ -550,12 +624,12 @@ namespace FlyBy
 		[GtkChild]	Gtk.Adjustment	position_adj;
 		[GtkChild]	Gtk.SpinButton	fps_box;
 		internal	double	fps { get; set; default = 12; }
-		
+
 		[GtkChild]	Gtk.ComboBoxText	ana_mode_box;
 		[GtkChild]	Gtk.Adjustment	redboost_adj;
 		[GtkChild]	Gtk.Switch	altern_switch;
 		[GtkChild]	Gtk.ListBoxRow	altern_row;
-		
+
 		GLib.ListStore frames = new ListStore(typeof(FlyBy.Frame));
 		Gtk.SingleSelection selection;
 
@@ -571,7 +645,7 @@ namespace FlyBy
 			css_provider.load_from_resource("/org/neocities/albertt/flyby/style.css");
 			Gtk.StyleContext.add_provider_for_display (Gdk.Display.get_default (), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
 		}
-		
+
 		construct {
 			bind_property("fps", fps_box, "value", BindingFlags.BIDIRECTIONAL | BindingFlags.SYNC_CREATE);
 
@@ -585,11 +659,11 @@ namespace FlyBy
 						filter = App.ff_flyby,
 					};
 					d.show();
-		
+
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
 							this.open.begin(d.get_file());
-						
+
 						d.close();
 					});
 				}, null, null, null},
@@ -600,16 +674,16 @@ namespace FlyBy
 					};
 					d.set_current_name(".flyby");
 					d.show();
-		
+
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
 							this.save.begin(d.get_file(), (_, ctx) => {
 								this.save.end(ctx);
 								message("Finished saving");
 							});
-		
+
 						d.close();
-					});		
+					});
 				}, null, null, null},
 				{"export-composite", () => {
 					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
@@ -628,7 +702,7 @@ namespace FlyBy
 					qual_scale.adjustment.value = 90;
 					ab.pack_start(qual_scale);
 					d.show();
-		
+
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
 							this.stage.export_composite(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
@@ -637,7 +711,7 @@ namespace FlyBy
 							});
 
 						d.close();
-					});		
+					});
 				}, null, null, null},
 				{"export-stereo", () => {
 					var d = new Gtk.FileChooserDialog("Save As", this, Gtk.FileChooserAction.SAVE, "Cancel", Gtk.ResponseType.CANCEL, "Save As", Gtk.ResponseType.OK) {
@@ -656,7 +730,7 @@ namespace FlyBy
 					qual_scale.adjustment.value = 90;
 					ab.pack_start(qual_scale);
 					d.show();
-		
+
 					d.response.connect((r) => {
 						if (r == Gtk.ResponseType.OK)
 							this.stage.export_stereo(d.get_file(), (int) qual_scale.adjustment.value, (_, ctx) => {
@@ -665,7 +739,7 @@ namespace FlyBy
 							});
 
 						d.close();
-					});		
+					});
 				}, null, null, null},
 				{"export-gif", () => {
 					var d = new ExportGifDlg(this.frames, this.fps) {
@@ -758,12 +832,12 @@ namespace FlyBy
 						files.get_files().foreach((file) => {
 							var file_info = file.query_info("standard::*", 0);
 							if (App.ff_images.match(file_info))
-							{					
+							{
 								this.frames.append(new FrameFromDisk(file));
 								at_least_one_file_matched = true;
 							}
 							else if (App.ff_videos.match(file_info))
-							{					
+							{
 								var dlg = new ImportVideoDlg(file) { transient_for = this };
 								dlg.show();
 								dlg.new_frame.connect(frame => this.frames.append(frame));
@@ -815,7 +889,7 @@ namespace FlyBy
 					title = "Frame",
 					expand = true,
 					resizable = true,
-					
+
 					factory = new_signal_list_item_factory(
 						(@this, li) => {
 							li.child = new Gtk.Label(null) {
@@ -893,10 +967,10 @@ namespace FlyBy
 				this.frames.bind_property("n-items", this.stage, "visible", BindingFlags.SYNC_CREATE, (_, src, ref dst) => {	// Only show the stage when a frame can be selected. This lets us avoid a null frame state in FlyBy.Stage code
 					dst.set_boolean(src.get_uint() > 0); return true;
 				});
-	
+
 				this.ana_mode_box.bind_property("active", this.stage, "method", BindingFlags.BIDIRECTIONAL);
 				this.ana_mode_box.active = 1;
-	
+
 				this.redboost_adj.bind_property("value", this.stage, "red-coef", BindingFlags.BIDIRECTIONAL);
 
 				var scroll = new Gtk.EventControllerScroll(
@@ -935,7 +1009,7 @@ namespace FlyBy
 				this.anim_state.notify["state"].connect(() => refresh_can_animate());
 				this.stage.notify["method"].connect(() => refresh_can_animate());
 			}
-			
+
 			/* Modal dialogs */
 			//  this.export_dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL);
 			//  this.export_start.connect(() => {
@@ -994,11 +1068,11 @@ namespace FlyBy
 			};
 			this.anim_state.on_transition(AnimationState.PLAY_FWD, AnimationState.NONE, stop_timer);
 			this.anim_state.on_transition(AnimationState.PLAY_BACKWD, AnimationState.NONE, stop_timer);
-			
+
 			this.anim_state.on_enter(AnimationState.ALTERNATING, () => {
 				if (this.stage.method != AnaglyphMethod.NONE)
 					return false;
-				
+
 				this.alternate_frames_recursive();
 				return true;
 			});
@@ -1037,7 +1111,7 @@ namespace FlyBy
 			row_drag.prepare.connect(() => {
 				uint idx_this;	// At the time of drag begin. The index will change, remember.
 				this.frames.find(li.item, out idx_this);
-				
+
 				var idx_this_val = new Value(typeof(uint));
 				idx_this_val.set_uint(idx_this);
 
@@ -1063,7 +1137,7 @@ namespace FlyBy
 				//  this.index_under_rclick = idx_this;
 			});
 			li.child.add_controller(rclick);
-			
+
 			// FIXME: How to do an actual context menu in Gtk4 that allows callbacks to code?
 			//  var popover = new Gtk.PopoverMenu.from_model(
 			//  	(new Gtk.Builder.from_resource("/org/neocities/albertt/flyby/menu_frame_listview.ui")).get_object("menu") as GLib.MenuModel
@@ -1222,7 +1296,7 @@ namespace FlyBy
 
 			/* Init pipeline */
 			this.create_pipeline(file);		// In pre-rolled state
-			
+
 			var first_frame = sample_to_pixbuf(appsink.pull_preroll());
 			preview.paintable = Gdk.Texture.for_pixbuf(
 				first_frame.scale_simple(
@@ -1231,7 +1305,7 @@ namespace FlyBy
 					Gdk.InterpType.BILINEAR
 				)
 			);
-			
+
 			double fps;
 			int64 vid_total_frames, duration_ns;
 			this.get_vid_info(out fps, out vid_total_frames, out duration_ns);
@@ -1256,7 +1330,7 @@ namespace FlyBy
 			resize.notify["size"].connect(() => update_label());
 			skip.notify["value"].connect(() => update_label());
 
-			// 
+			//
 
 			var videosz_capf = ppl.get_by_name("videosz-capf");
 			resize.notify["size"].connect(() => {
@@ -1379,10 +1453,10 @@ namespace FlyBy
 			int width_px, height_px;
 			caps.get_int("width", out width_px);
 			caps.get_int("height", out height_px);
-			
+
 			var buf = sample.get_buffer();
 			Gst.MapInfo map;
-			
+
 			if (buf.map(out map, Gst.MapFlags.READ))
 			{
 				var pixbuf = new Gdk.Pixbuf.from_bytes(new Bytes(map.data), Gdk.Colorspace.RGB, false, 8, width_px, height_px, width_px * 3);
@@ -1459,13 +1533,13 @@ namespace FlyBy
 
 			//  	midbox.append(scale_p);
 			//  	midbox.append(scale_q);
-				
+
 			//  	ab.set_center_widget(midbox);
 			//  }
 
 			/* Init pipeline */
 			this.create_pipeline(fps);		// In pre-rolled state
-			
+
 			var videosz_capf = ppl.get_by_name("videosz-capf");
 			resize.notify["size"].connect(() => {
 				videosz_capf.set_property("caps", Gst.Caps.from_string(@"video/x-raw,width=$(resize.size.width),height=$(resize.size.height)"));
@@ -1486,7 +1560,7 @@ namespace FlyBy
 					ppl.set_state(Gst.State.NULL);
 					this.close();
 				}
-			});		
+			});
 		}
 
 		Gst.Pipeline ppl;
@@ -1619,37 +1693,53 @@ namespace FlyBy
 					active = 0;
 			}
 
-			var new_sz = Gdk.Rectangle();
-			bool portrait = false;
+            var new_sz = Gdk.Rectangle();
+            bool swapped = false;
 
-			if (orig_sz.height > orig_sz.width)
-			{
-				portrait = true;
-				new_sz.width = orig_sz.height;
-				new_sz.height = orig_sz.width;
-			}
-			else
-			{
-				new_sz.width = orig_sz.width;
-				new_sz.height = orig_sz.height;
-			}
+            int src_w = orig_sz.width;
+            int src_h = orig_sz.height;
 
-			switch (active)
-			{
-				case 0: new_sz.height = new_sz.height; new_sz.width = orig_sz.width; break;
-				case 1: new_sz.height = 360; new_sz.width = (orig_sz.width * new_sz.height)/orig_sz.height; break;
-				case 2: new_sz.height = 720; new_sz.width = (orig_sz.width * new_sz.height)/orig_sz.height; break;
-				case 3: new_sz.height = 1080; new_sz.width = (orig_sz.width * new_sz.height)/orig_sz.height; break;
-			}
+            // normalise so width >= height
+            if (src_h > src_w)
+            {
+                swapped = true;
+                var tmp = src_h;
+                src_h = src_w;
+                src_w = tmp;
+            }
 
-			if (portrait)
-			{
-				var foo = new_sz.height;
-				new_sz.height = new_sz.width;
-				new_sz.width = foo;
-			}
+            switch (active)
+            {
+                case 0:
+                    new_sz.width  = src_w;
+                    new_sz.height = src_h;
+                    break;
 
-			this.size = new_sz;
+                case 1:
+                    new_sz.height = 360;
+                    new_sz.width  = (src_w * new_sz.height) / src_h;
+                    break;
+
+                case 2:
+                    new_sz.height = 720;
+                    new_sz.width  = (src_w * new_sz.height) / src_h;
+                    break;
+
+                case 3:
+                    new_sz.height = 1080;
+                    new_sz.width  = (src_w * new_sz.height) / src_h;
+                    break;
+            }
+
+            // restore original orientation *only if we actually swapped*
+            if (swapped)
+            {
+                var tmp = new_sz.height;
+                new_sz.height = new_sz.width;
+                new_sz.width = tmp;
+            }
+
+            this.size = new_sz;
 		}
 	}
 }

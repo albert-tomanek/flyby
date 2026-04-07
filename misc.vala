@@ -56,7 +56,7 @@ errordomain StateMachineError
 	INVALID_TRANSITION
 }
 
-class StateMachine : Object
+class StateMachine : Object     // Moor Machine
 {
 	public int state { get; private set; }
 
@@ -128,7 +128,7 @@ class StateMachine : Object
 		for (int i = 0; i < this.valid_transitions.length; i += 2)
 			if (this.valid_transitions[i] == from && this.valid_transitions[i + 1] == to)
 				return true;
-		
+
 		return false;
 	}
 

@@ -9,3 +9,6 @@ This is an app for any situation where you take multiple successive pictures of 
 
 ![](screenshot1.png)
 ![](screenshot2.png)
+
+![](example1.gif)
+![](example2.gif)
